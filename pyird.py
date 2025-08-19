@@ -6,11 +6,15 @@ import os
 import threading
 import queue
 import math
+import hashlib
+import mmap
+import concurrent.futures
+from concurrent.futures import ThreadPoolExecutor
 import customtkinter as ctk
 from tkinter import ttk, filedialog, messagebox
 
 def uncompress_gzip(data: bytes) -> bytes:
-    if data[:2] == b'\x1f\x8b':  # gzip magic
+    if data[:2] == b"\x1f\x8b":  # gzip magic
         return zlib.decompress(data, zlib.MAX_WBITS | 16)
     return data
 
@@ -248,7 +252,7 @@ def parse_ird_content(content: bytes) -> Ird:
     data_length = stream.tell()
     result.crc32 = struct.unpack('<I', stream.read(4))[0]
 
-    calculated_crc = crc32(content[:data_length]) & 0xffffffff
+    calculated_crc = crc32(content[:data_length]) & 0xFFFFFFFF
     if result.crc32 != calculated_crc:
         print(f"Warning: CRC32 mismatch ({result.crc32:08x} != {calculated_crc:08x})")
 
@@ -281,98 +285,98 @@ class App(ctk.CTk):
         ctk.set_appearance_mode("system")
         ctk.set_default_color_theme("blue")
 
-        self.title("PYIRD v2.1")
-        self.geometry("1200x700")
-        self.minsize(1000, 650)
+        self.title("PYIRD v2.3 (Experimental)")
+        self.geometry("1300x740")
+        self.minsize(1100, 680)
 
         self.main = ctk.CTkFrame(self, corner_radius=8)
         self.main.pack(fill="both", expand=True, padx=12, pady=12)
 
         self.main.grid_columnconfigure(0, weight=1)
-        # rows: 0 header row, 1 filename, 2 divider, 3 progress, 4 info, 5 divider, 6 table
-        for r in range(7):
+        for r in range(8):
             self.main.grid_rowconfigure(r, weight=0)
-        self.main.grid_rowconfigure(6, weight=1)  # table expands
+        self.main.grid_rowconfigure(7, weight=1)
 
-        # Top bar: Select button + status text
+        # Top bar
         self.topbar = ctk.CTkFrame(self.main, fg_color="transparent")
         self.topbar.grid(row=0, column=0, sticky="ew", padx=0, pady=(0, 6))
         self.topbar.grid_columnconfigure(0, weight=0)
-        self.topbar.grid_columnconfigure(1, weight=1)
+        self.topbar.grid_columnconfigure(1, weight=0)
+        self.topbar.grid_columnconfigure(2, weight=1)
 
         self.pick_btn = ctk.CTkButton(self.topbar, text="Select IRD file", command=self.pick_file)
         self.pick_btn.grid(row=0, column=0, sticky="w")
+        self.pick_folder_btn = ctk.CTkButton(self.topbar, text="Select JB Folder", command=self.pick_folder)
+        self.pick_folder_btn.grid(row=0, column=1, padx=(8, 0), sticky="w")
 
         self.status_var = ctk.StringVar(value="")
         self.status_lbl = ctk.CTkLabel(self.topbar, textvariable=self.status_var)
-        self.status_lbl.grid(row=0, column=1, sticky="e")
+        self.status_lbl.grid(row=0, column=2, sticky="e")
 
-        # Loaded file label
-        self.loaded_var = ctk.StringVar(value="")
-        self.loaded_lbl = ctk.CTkLabel(self.main, textvariable=self.loaded_var, font=("", 14, "bold"))
-        self.loaded_lbl.grid(row=1, column=0, sticky="w", pady=(0, 6))
+        # IRD & JB labels
+        self.loaded_ird_var = ctk.StringVar(value="")
+        self.loaded_ird_lbl = ctk.CTkLabel(self.main, textvariable=self.loaded_ird_var, font=("", 14, "bold"))
+        self.loaded_ird_lbl.grid(row=1, column=0, sticky="w")
 
-        self._divider(self.main, 2)
+        self.loaded_jb_var = ctk.StringVar(value="")
+        self.loaded_jb_lbl = ctk.CTkLabel(self.main, textvariable=self.loaded_jb_var, font=("", 14, "bold"))
+        self.loaded_jb_lbl.grid(row=2, column=0, sticky="w", pady=(0, 6))
 
-        #Progress row
+        self._divider(self.main, 3)
+
+        # Progress
         self.progress_row = ctk.CTkFrame(self.main, fg_color="transparent")
-        self.progress_row.grid(row=3, column=0, sticky="ew", pady=6)
+        self.progress_row.grid(row=4, column=0, sticky="ew", pady=6)
         self.progress_row.grid_columnconfigure(0, weight=0)
         self.progress_row.grid_columnconfigure(1, weight=1)
 
         self.progress = ctk.CTkProgressBar(self.progress_row, mode="indeterminate")
         self.progress.grid(row=0, column=0, padx=(0, 12))
-        self.progress_lbl = ctk.CTkLabel(self.progress_row, text="Parsing IRD...")
+        self.progress_lbl = ctk.CTkLabel(self.progress_row, text="Working...")
         self.progress_lbl.grid(row=0, column=1, sticky="w")
         self._set_busy(False)
 
-        # Info table
+        # Info frame
         self.info_frame = ctk.CTkFrame(self.main)
-        self.info_frame.grid(row=4, column=0, sticky="ew", pady=(6, 6))
+        self.info_frame.grid(row=5, column=0, sticky="ew", pady=(6, 6))
         for c in range(7):
             self.info_frame.grid_columnconfigure(c, weight=1)
 
         headers = ["Product Code", "Title", "App Version", "Game Version", "Update Version", "Files", "Total Size"]
         self.info_vars = [ctk.StringVar(value="") for _ in headers]
 
-        # header labels
         for i, h in enumerate(headers):
             lbl = ctk.CTkLabel(self.info_frame, text=h, font=("", 12, "bold"))
             lbl.grid(row=0, column=i, sticky="ew", padx=4, pady=(4, 2))
-
-        # value labels
         for i, var in enumerate(self.info_vars):
             val = ctk.CTkLabel(self.info_frame, textvariable=var)
             val.grid(row=1, column=i, sticky="ew", padx=4, pady=(0, 6))
 
-        self._divider(self.main, 5)
+        self._divider(self.main, 6)
 
-        # Files table
-        self.table_frame = ctk.CTkFrame(self.main)
-        self.table_frame.grid(row=6, column=0, sticky="nsew", pady=(6, 0))
-        self.table_frame.grid_rowconfigure(0, weight=1)
-        self.table_frame.grid_columnconfigure(0, weight=1)
+        # Treeview Table
+        self.table_container = ctk.CTkFrame(self.main)
+        self.table_container.grid(row=7, column=0, sticky="nsew", pady=(6, 0))
+        self.table_container.grid_columnconfigure(0, weight=1)
+        self.table_container.grid_rowconfigure(0, weight=1)
 
-        columns = ("name", "offset", "size", "md5")
-        self.tree = ttk.Treeview(self.table_frame, columns=columns, show="headings", selectmode="browse", height=20)
-        self.tree.heading("name", text="Filename")
-        self.tree.heading("offset", text="Start Sector")
-        self.tree.heading("size", text="Size (bytes)")
-        self.tree.heading("md5", text="MD5 Hash")
+        self.table_headers = ("Filename", "Size (bytes)", "MD5 (IRD)", "Size (JB)", "MD5 (JB)", "Result")
 
-        self.tree.column("name", anchor="w", stretch=True, width=500)
-        self.tree.column("offset", anchor="w", stretch=True, width=150)
-        self.tree.column("size", anchor="w", stretch=True, width=150)
-        self.tree.column("md5", anchor="w", stretch=True, width=320)
-
+        self.tree = ttk.Treeview(self.table_container, columns=self.table_headers, show="headings")
         self.tree.grid(row=0, column=0, sticky="nsew")
 
-        style = ttk.Style(self)
-        style.configure("Treeview", rowheight=20)
+        for col in self.table_headers:
+            self.tree.heading(col, text=col)
+            self.tree.column(col, anchor="w", width=150, stretch=True)
 
-        # internal state
-        self._rows_queue: "queue.Queue[list[tuple]]" = queue.Queue()
-        self._inserting = False
+        self._rows = []  # store tree item IDs
+
+        self.current_ird = None
+        self.current_jb = None
+
+        self._result_q = queue.Queue()
+        self._summary_counts = {"ok":0, "missing":0, "mismatch":0}
+        self.after(50, self._drain_results)
 
     def _divider(self, parent, row_index):
         sep = ttk.Separator(parent, orient="horizontal")
@@ -388,6 +392,45 @@ class App(ctk.CTk):
         if msg is not None:
             self.status_var.set(msg)
 
+    def _show_error_threadsafe(self, msg: str):
+        def apply():
+            self._set_busy(False, "")
+            messagebox.showerror("Error", msg)
+        self.after(0, apply)
+
+    def _set_status_threadsafe(self, msg: str):
+        self.after(0, lambda: self.status_var.set(msg))
+
+    def _clear_table(self):
+        for iid in self._rows:
+            self.tree.delete(iid)
+        self._rows.clear()
+
+    def _add_table_row(self, values: list[str], tag: str = ""):
+        iid = self.tree.insert("", "end", values=values, tags=(tag,))
+        self._rows.append(iid)
+
+    def _drain_results(self, max_per_tick: int = 1200):
+        if self._result_q.qsize() > 5000:
+            max_per_tick = 3000
+        processed = 0
+        while processed < max_per_tick and not self._result_q.empty():
+            idx, jb_size, jb_md5, result, tag = self._result_q.get()
+            if 0 <= idx < len(self._rows):
+                vals = list(self.tree.item(self._rows[idx], "values"))
+                vals[3] = jb_size or ""
+                vals[4] = jb_md5 or ""
+                vals[5] = result or ""
+                self.tree.item(self._rows[idx], values=vals)
+                self.tree.tag_configure("ok", background="#eaffea")
+                self.tree.tag_configure("missing", background="#ffecec")
+                self.tree.tag_configure("mismatch", background="#fff5d6")
+                self.tree.item(self._rows[idx], tags=(tag,))
+            if tag in self._summary_counts:
+                self._summary_counts[tag] += 1
+            processed += 1
+        self.after(25, self._drain_results)
+
     def pick_file(self):
         path = filedialog.askopenfilename(
             title="Select IRD file",
@@ -395,13 +438,22 @@ class App(ctk.CTk):
         )
         if not path:
             return
-        self.loaded_var.set(f"Loaded IRD: {os.path.basename(path)}")
+        self.loaded_ird_var.set(f"Loaded IRD: {os.path.basename(path)}")
         self.status_var.set("")
-        self.clear_table()
         self._load_ird(path)
 
+    def pick_folder(self):
+        root = filedialog.askdirectory(title="Select JB game folder (contains PS3_GAME, etc.)")
+        if not root:
+            return
+        self.current_jb = root
+        self.loaded_jb_var.set(f"Loaded JB folder: {root}")
+        # Auto-validate
+        if self.current_ird and self.current_ird.files:
+            self._validate_jb_folder(root)
+
     def clear_table(self):
-        self.tree.delete(*self.tree.get_children())
+        self._clear_table()
 
     def _load_ird(self, path: str):
         self._set_busy(True, "Reading file...")
@@ -420,88 +472,168 @@ class App(ctk.CTk):
 
             self._set_status_threadsafe("Parsing IRD header...")
             ird = parse_ird_content(content)
+            self.current_ird = ird
 
             # Build rows
-            rows = []
             self._set_status_threadsafe("Preparing rows...")
-            for i, ird_file in enumerate(ird.files):
-                if i < len(ird.iso_files):
-                    fdata = ird.iso_files[i]
-                    name = fdata["name"]
-                    size = fdata["size"]
-                else:
-                    name = f"File {i}"
-                    size = ""
-                rows.append((
-                    name,
-                    str(ird_file.offset),
-                    str(size),
-                    ird_file.md5_checksum.hex()
-                ))
 
-            # update info section
-            self._update_info_threadsafe(
-                product_code=ird.product_code,
-                title=ird.title,
-                app_version=ird.app_version,
-                game_version=ird.game_version,
-                update_version=ird.update_version,
-                file_count=str(ird.file_count),
-                total_size=f"{ird.disc_size} ({human_size(ird.disc_size)})" if ird.disc_size else ""
-            )
+            offset_to_file = {f['first_extent']: f for f in ird.iso_files}
 
-            BATCH = 500
-            for i in range(0, len(rows), BATCH):
-                self._rows_queue.put(rows[i:i+BATCH])
+            def apply_rows():
+                self._clear_table()
+                for ird_file in ird.files:
+                    fdata = offset_to_file.get(ird_file.offset)
+                    if fdata:
+                        name = fdata['name']
+                        size = fdata['size']
+                    else:
+                        name = f"File {ird_file.offset}"
+                        size = ""
+                    self._add_table_row([
+                        name,
+                        #str(ird_file.offset),
+                        str(size),
+                        ird_file.md5_checksum.hex(),
+                        "",  # jb_size
+                        "",  # jb_md5
+                        ""   # result
+                    ])
 
-            self._schedule_insert_batches()
+                # update info section
+                vals = [
+                    ird.product_code,
+                    ird.title,
+                    ird.app_version,
+                    ird.game_version,
+                    ird.update_version,
+                    str(ird.file_count),
+                    f"{ird.disc_size} ({human_size(ird.disc_size)})" if ird.disc_size else ""
+                ]
+                for var, v in zip(self.info_vars, vals):
+                    var.set(v)
+
+            self.after(0, apply_rows)
+
+            def finish_and_maybe_validate():
+                self._set_busy(False, "Done.")
+                # Auto-validate
+                if self.current_jb:
+                    self._validate_jb_folder(self.current_jb)
+            self.after(0, finish_and_maybe_validate)
+
         except Exception as ex:
-            self._show_error_threadsafe(f"Failed to load IRD.\n\n{ex}")
+            self._show_error_threadsafe(f"Failed to load IRD.{ex}")
 
-    def _set_status_threadsafe(self, msg: str):
-        self.after(0, lambda: self.status_var.set(msg))
+    def _validate_jb_folder(self, root: str):
+        self._set_busy(True, "Scanning JB folder...")
+        t = threading.Thread(target=self._validate_worker, args=(root,), daemon=True)
+        t.start()
 
-    def _update_info_threadsafe(
-        self,
-        product_code: str,
-        title: str,
-        app_version: str,
-        game_version: str,
-        update_version: str,
-        file_count: str,
-        total_size: str
-    ):
-        def apply():
-            vals = [product_code, title, app_version, game_version, update_version, file_count, total_size]
-            for var, v in zip(self.info_vars, vals):
-                var.set(v)
-        self.after(0, apply)
+    @staticmethod
+    def _normalize_path_for_match(rel_path: str) -> str:
+        return rel_path.replace("\\", "/").strip("/").rstrip(".").lower()
 
-    def _show_error_threadsafe(self, msg: str):
-        def apply():
-            self._set_busy(False, "")
-            messagebox.showerror("Error", msg)
-        self.after(0, apply)
+    @staticmethod
+    def _build_case_insensitive_file_map(root: str) -> dict[str, str]:
+        mapping: dict[str, str] = {}
+        root = os.path.abspath(root)
+        for base, _, files in os.walk(root):
+            for fn in files:
+                full = os.path.join(base, fn)
+                rel = os.path.relpath(full, root)
+                mapping[App._normalize_path_for_match(rel)] = full
+        return mapping
 
-    def _schedule_insert_batches(self):
-        if self._inserting:
-            return
-        self._inserting = True
-        self._set_busy(True, "Rendering table...")
-        self.after(0, self._insert_next_batch)
+    @staticmethod
+    def _md5_of_file(path: str) -> tuple[str, int]:
+        h = hashlib.md5()
+        size = os.path.getsize(path)
+        with open(path, "rb") as f:
+            with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+                h.update(mm)
+        return h.hexdigest(), size
 
-    def _insert_next_batch(self):
+    def _validate_worker(self, root: str):
         try:
-            batch = self._rows_queue.get_nowait()
-        except queue.Empty:
-            self._inserting = False
-            self._set_busy(False, "Done.")
-            return
-
-        for row in batch:
-            self.tree.insert("", "end", values=row)
-
-        self.after(1, self._insert_next_batch)
+            ird = self.current_ird
+            if not ird:
+                self._set_status_threadsafe("Load an IRD first")
+                self._set_busy(False)
+                return
+    
+            while not self._result_q.empty():
+                try: self._result_q.get_nowait()
+                except queue.Empty: break
+            self._summary_counts = {"ok": 0, "missing": 0, "mismatch": 0}
+    
+            file_map = self._build_case_insensitive_file_map(root)
+            self._set_status_threadsafe("Validating files...")
+    
+            file_queue = queue.Queue(maxsize=20)  # small buffer to decouple I/O and CPU
+            num_workers = min(4, os.cpu_count() or 4)
+    
+            # sequential file reads
+            def producer():
+                for idx, f in enumerate(ird.files):
+                    iso_entry = next((e for e in ird.iso_files if e['first_extent'] == f.offset), None)
+                    rel = iso_entry['name'] if iso_entry else f"File {f.offset}"
+                    key = self._normalize_path_for_match(rel)
+                    real_path = file_map.get(key)
+                    if real_path:
+                        try:
+                            data = open(real_path, "rb").read()
+                        except Exception as e:
+                            data = e  # signal read error
+                    else:
+                        data = None  # missing file
+                    file_queue.put((idx, f, rel, data))
+    
+                # signal workers to stop
+                for _ in range(num_workers):
+                    file_queue.put(None)
+    
+            # CPU-bound validation
+            def worker():
+                while True:
+                    item = file_queue.get()
+                    if item is None: break
+                    idx, f, rel, data = item
+    
+                    if isinstance(data, Exception):
+                        result = (idx, "", f"<error: {data}>", "Read error", "mismatch")
+                    elif data is None:
+                        result = (idx, None, None, "Missing", "missing")
+                    else:
+                        md5_hex = hashlib.md5(data).hexdigest()
+                        md5_ok = (md5_hex.lower() == f.md5_checksum.hex().lower())
+                        status = "OK" if md5_ok else "Mismatch (md5)"
+                        status_class = "ok" if md5_ok else "mismatch"
+                        result = (idx, str(len(data)), md5_hex, status, status_class)
+    
+                    self._result_q.put(result)
+    
+            threading.Thread(target=producer, daemon=True).start()
+            with ThreadPoolExecutor(max_workers=num_workers) as executor:
+                for _ in range(num_workers):
+                    executor.submit(worker)
+    
+            # finish callback
+            def finish_when_quiet():
+                if not self._result_q.empty():
+                    self.after(150, finish_when_quiet)
+                    return
+                ok = self._summary_counts["ok"]
+                missing = self._summary_counts["missing"]
+                mismatch = self._summary_counts["mismatch"]
+                summary = f"Validation finished.\nOK: {ok}\nMissing: {missing}\nMismatch: {mismatch}\n"
+                self._set_busy(False, "Validation complete.")
+                messagebox.showinfo("JB Validation", summary)
+                self._summary_counts = {"ok": 0, "missing": 0, "mismatch": 0}
+    
+            self.after(150, finish_when_quiet)
+    
+        except Exception as ex:
+            self._show_error_threadsafe(f"Validation failed.{ex}")
 
 if __name__ == "__main__":
     App().mainloop()
