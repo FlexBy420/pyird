@@ -285,7 +285,7 @@ class App(ctk.CTk):
         ctk.set_appearance_mode("system")
         ctk.set_default_color_theme("blue")
 
-        self.title("PYIRD v2.3 (Experimental)")
+        self.title("PYIRD v2.3.1 (Experimental)")
         self.geometry("1300x740")
         self.minsize(1100, 680)
 
@@ -545,12 +545,18 @@ class App(ctk.CTk):
         return mapping
 
     @staticmethod
-    def _md5_of_file(path: str) -> tuple[str, int]:
+    def _md5_of_file(path: str, chunk_size: int = 4 * 1024 * 1024, mmap_threshold: int = 2048 * 1024 * 1024) -> tuple[str, int]:
         h = hashlib.md5()
         size = os.path.getsize(path)
         with open(path, "rb") as f:
-            with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
-                h.update(mm)
+            if size <= mmap_threshold:
+                # mmap the whole file
+                with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+                    h.update(mm)
+            else:
+                # stream in chunks
+                while chunk := f.read(chunk_size):
+                    h.update(chunk)
         return h.hexdigest(), size
 
     def _validate_worker(self, root: str):
@@ -560,19 +566,24 @@ class App(ctk.CTk):
                 self._set_status_threadsafe("Load an IRD first")
                 self._set_busy(False)
                 return
-    
+
             while not self._result_q.empty():
                 try: self._result_q.get_nowait()
                 except queue.Empty: break
             self._summary_counts = {"ok": 0, "missing": 0, "mismatch": 0}
-    
+
+            total_files = len(ird.files)
+            self._files_done = 0  # counter for progress
+
             file_map = self._build_case_insensitive_file_map(root)
             self._set_status_threadsafe("Validating files...")
-    
-            file_queue = queue.Queue(maxsize=20)  # small buffer to decouple I/O and CPU
-            num_workers = min(4, os.cpu_count() or 4)
-    
-            # sequential file reads
+            self.progress_lbl.configure(text=f"0 / {total_files} files")
+
+            file_queue = queue.Queue(maxsize=10)  # buffer between producer and workers
+            cpu_total = os.cpu_count() or 4
+            num_workers = max(1, cpu_total // 2)
+
+            # sequential file listing
             def producer():
                 for idx, f in enumerate(ird.files):
                     iso_entry = next((e for e in ird.iso_files if e['first_extent'] == f.offset), None)
@@ -580,43 +591,47 @@ class App(ctk.CTk):
                     key = self._normalize_path_for_match(rel)
                     real_path = file_map.get(key)
                     if real_path:
-                        try:
-                            data = open(real_path, "rb").read()
-                        except Exception as e:
-                            data = e  # signal read error
+                        file_queue.put((idx, f, rel, real_path))
                     else:
-                        data = None  # missing file
-                    file_queue.put((idx, f, rel, data))
-    
+                        file_queue.put((idx, f, rel, None))  # missing file
+
                 # signal workers to stop
                 for _ in range(num_workers):
                     file_queue.put(None)
-    
+
             # CPU-bound validation
             def worker():
                 while True:
                     item = file_queue.get()
-                    if item is None: break
-                    idx, f, rel, data = item
-    
-                    if isinstance(data, Exception):
-                        result = (idx, "", f"<error: {data}>", "Read error", "mismatch")
-                    elif data is None:
+                    if item is None:
+                        break
+                    idx, f, rel, real_path = item
+
+                    if real_path is None:
                         result = (idx, None, None, "Missing", "missing")
                     else:
-                        md5_hex = hashlib.md5(data).hexdigest()
-                        md5_ok = (md5_hex.lower() == f.md5_checksum.hex().lower())
-                        status = "OK" if md5_ok else "Mismatch (md5)"
-                        status_class = "ok" if md5_ok else "mismatch"
-                        result = (idx, str(len(data)), md5_hex, status, status_class)
-    
+                        try:
+                            md5_hex, size = self._md5_of_file(real_path)
+                            md5_ok = (md5_hex.lower() == f.md5_checksum.hex().lower())
+                            status = "OK" if md5_ok else "Mismatch (md5)"
+                            status_class = "ok" if md5_ok else "mismatch"
+                            result = (idx, str(size), md5_hex, status, status_class)
+                        except Exception as e:
+                            result = (idx, "", f"<error: {e}>", "Read error", "mismatch")
+
                     self._result_q.put(result)
-    
+
+                    # increment progress
+                    self._files_done += 1
+                    done = self._files_done
+                    self.after(0, lambda d=done: self.progress_lbl.configure(
+                        text=f"{d} / {total_files} files"))
+
             threading.Thread(target=producer, daemon=True).start()
             with ThreadPoolExecutor(max_workers=num_workers) as executor:
                 for _ in range(num_workers):
                     executor.submit(worker)
-    
+
             # finish callback
             def finish_when_quiet():
                 if not self._result_q.empty():
@@ -629,11 +644,11 @@ class App(ctk.CTk):
                 self._set_busy(False, "Validation complete.")
                 messagebox.showinfo("JB Validation", summary)
                 self._summary_counts = {"ok": 0, "missing": 0, "mismatch": 0}
-    
+
             self.after(150, finish_when_quiet)
-    
+
         except Exception as ex:
-            self._show_error_threadsafe(f"Validation failed.{ex}")
+            self._show_error_threadsafe(f"Validation failed. {ex}")
 
 if __name__ == "__main__":
     App().mainloop()
