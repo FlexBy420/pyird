@@ -285,7 +285,7 @@ class App(ctk.CTk):
         ctk.set_appearance_mode("system")
         ctk.set_default_color_theme("blue")
 
-        self.title("PYIRD v2.3.1 (Experimental)")
+        self.title("PYIRD v2.3.2 (Experimental)")
         self.geometry("1300x740")
         self.minsize(1100, 680)
 
@@ -304,9 +304,9 @@ class App(ctk.CTk):
         self.topbar.grid_columnconfigure(1, weight=0)
         self.topbar.grid_columnconfigure(2, weight=1)
 
-        self.pick_btn = ctk.CTkButton(self.topbar, text="Select IRD file", command=self.pick_file)
+        self.pick_btn = ctk.CTkButton(self.topbar, text="Select IRD File", command=self.pick_file, state="disabled")
         self.pick_btn.grid(row=0, column=0, sticky="w")
-        self.pick_folder_btn = ctk.CTkButton(self.topbar, text="Select JB Folder", command=self.pick_folder)
+        self.pick_folder_btn = ctk.CTkButton(self.topbar, text="Select Game Folder", command=self.pick_folder)
         self.pick_folder_btn.grid(row=0, column=1, padx=(8, 0), sticky="w")
 
         self.status_var = ctk.StringVar(value="")
@@ -344,6 +344,7 @@ class App(ctk.CTk):
 
         headers = ["Product Code", "Title", "App Version", "Game Version", "Update Version", "Files", "Total Size"]
         self.info_vars = [ctk.StringVar(value="") for _ in headers]
+        self.info_labels = []
 
         for i, h in enumerate(headers):
             lbl = ctk.CTkLabel(self.info_frame, text=h, font=("", 12, "bold"))
@@ -351,6 +352,7 @@ class App(ctk.CTk):
         for i, var in enumerate(self.info_vars):
             val = ctk.CTkLabel(self.info_frame, textvariable=var)
             val.grid(row=1, column=i, sticky="ew", padx=4, pady=(0, 6))
+            self.info_labels.append(val)
 
         self._divider(self.main, 6)
 
@@ -373,6 +375,7 @@ class App(ctk.CTk):
 
         self.current_ird = None
         self.current_jb = None
+        self.param_sfo = None
 
         self._result_q = queue.Queue()
         self._summary_counts = {"ok":0, "missing":0, "mismatch":0}
@@ -406,9 +409,46 @@ class App(ctk.CTk):
             self.tree.delete(iid)
         self._rows.clear()
 
+    def reset_app_state(self):
+        # Clear IRD and JB data
+        self.current_ird = None
+        self.current_jb = None
+        self.param_sfo = None
+
+        # Clear labels
+        self.loaded_ird_var.set("")
+        self.loaded_jb_var.set("")
+        for var in self.info_vars:
+            var.set("")
+
+        # Clear the treeview table
+        self._clear_table()
+
+        # Reset status and progress
+        self.status_var.set("")
+        self._set_busy(False)
+        self.progress_lbl.configure(text="Working...")
+
+        # Reset summary counts
+        self._summary_counts = {"ok": 0, "missing": 0, "mismatch": 0}
+
+        # Disable IRD button until a new folder is loaded
+        self.pick_btn.configure(state="disabled")
+
+        # Clear the result queue
+        while not self._result_q.empty():
+            try:
+                self._result_q.get_nowait()
+            except queue.Empty:
+                break
+
     def _add_table_row(self, values: list[str], tag: str = ""):
-        iid = self.tree.insert("", "end", values=values, tags=(tag,))
-        self._rows.append(iid)
+        if tag in ("missing", "mismatch"):
+            iid = self.tree.insert("", 0, values=values, tags=(tag,))
+            self._rows.insert(0, iid)
+        else:
+            iid = self.tree.insert("", "end", values=values, tags=(tag,))
+            self._rows.append(iid)
 
     def _drain_results(self, max_per_tick: int = 1200):
         if self._result_q.qsize() > 5000:
@@ -426,10 +466,73 @@ class App(ctk.CTk):
                 self.tree.tag_configure("missing", background="#ffecec")
                 self.tree.tag_configure("mismatch", background="#fff5d6")
                 self.tree.item(self._rows[idx], tags=(tag,))
+
+                if tag in ("missing", "mismatch"):
+                    self.tree.move(self._rows[idx], "", 0)
+
             if tag in self._summary_counts:
                 self._summary_counts[tag] += 1
             processed += 1
         self.after(25, self._drain_results)
+
+    def _parse_param_sfo(self, path):
+        with open(path, "rb") as f:
+            data = f.read()
+        magic, version, key_table_start, data_table_start, tables_entries = struct.unpack("<4sIIII", data[0:20])
+        if magic != b"\0PSF":
+            raise ValueError("Invalid PARAM.SFO file")
+        entries = {}
+        for i in range(tables_entries):
+            entry_offset = 0x14 + i * 16
+            key_offset, fmt, data_len, data_max_len, data_offset = struct.unpack("<HHIII", data[entry_offset:entry_offset+16])
+            key_off_abs = key_table_start + key_offset
+            key = data[key_off_abs:data.find(b"\x00", key_off_abs)].decode("utf-8")
+            val_off_abs = data_table_start + data_offset
+            raw_val = data[val_off_abs: val_off_abs + data_len]
+            try:
+                value = raw_val.decode("utf-8").rstrip("\x00")
+            except UnicodeDecodeError:
+                value = raw_val.hex()
+            entries[key] = value
+        return entries
+
+    def _compare_param_with_ird(self):
+        if not self.current_ird or not self.param_sfo:
+            return True  # nothing to compare yet
+
+        mismatches = []
+        ird_fields = {
+            "TITLE_ID": (self.info_vars[0], self.info_labels[0], "Product Code"),
+            "APP_VER": (self.info_vars[2], self.info_labels[2], "App Version"),
+            "VERSION": (self.info_vars[3], self.info_labels[3], "Game Version"),
+            "UPDATE_VER": (self.info_vars[4], self.info_labels[4], "Update Version"),
+        }
+
+        # check mismatches and mark labels
+        for key, (var, label, display_name) in ird_fields.items():
+            ird_val = var.get()
+            sfo_val = self.param_sfo.get(key)
+            if sfo_val and sfo_val != ird_val:
+                mismatches.append(f"{display_name} in IRD: {ird_val}\n{display_name} in Game Files: {sfo_val}")
+                label.configure(text_color="red")
+            else:
+                label.configure(text_color="white")
+
+        # show all mismatches in a single messagebox
+        if mismatches:
+            messagebox.showerror(
+                "IRD mismatch",
+                "The provided IRD does not appear to be for this game.\nPlease choose the correct IRD.\n\n" +
+                "\n".join(mismatches)
+            )
+            # unload wrong ird
+            self.current_ird = None
+            self.loaded_ird_var.set("")
+            self.clear_table()
+            for var in self.info_vars:
+                var.set("")
+            return False  # stop validation
+        return True
 
     def pick_file(self):
         path = filedialog.askopenfilename(
@@ -441,14 +544,33 @@ class App(ctk.CTk):
         self.loaded_ird_var.set(f"Loaded IRD: {os.path.basename(path)}")
         self.status_var.set("")
         self._load_ird(path)
+        if not self._compare_param_with_ird():
+            return
 
     def pick_folder(self):
-        root = filedialog.askdirectory(title="Select JB game folder (contains PS3_GAME, etc.)")
+        root = filedialog.askdirectory(title="Select Game Folder (contains PS3_GAME, etc.)")
         if not root:
             return
+        
+        self.reset_app_state()
+
+        if not os.path.isdir(os.path.join(root, "PS3_GAME")):
+            messagebox.showerror("Invalid Folder", "Selected folder does not contain PS3_GAME.")
+            return
+
         self.current_jb = root
-        self.loaded_jb_var.set(f"Loaded JB folder: {root}")
-        # Auto-validate
+        self.loaded_jb_var.set(f"Loaded Game Folder: {root}")
+        self.pick_btn.configure(state="normal")
+
+        sfo_path = os.path.join(root, "PS3_GAME", "PARAM.SFO")
+        if os.path.exists(sfo_path):
+            try:
+                self.param_sfo = self._parse_param_sfo(sfo_path)
+                if not self._compare_param_with_ird():
+                    return
+            except Exception as e:
+                messagebox.showwarning("PARAM.SFO", f"Failed to parse PARAM.SFO: {e}")
+
         if self.current_ird and self.current_ird.files:
             self._validate_jb_folder(root)
 
@@ -476,7 +598,6 @@ class App(ctk.CTk):
 
             # Build rows
             self._set_status_threadsafe("Preparing rows...")
-
             offset_to_file = {f['first_extent']: f for f in ird.iso_files}
 
             def apply_rows():
@@ -518,7 +639,8 @@ class App(ctk.CTk):
                 self._set_busy(False, "Done.")
                 # Auto-validate
                 if self.current_jb:
-                    self._validate_jb_folder(self.current_jb)
+                    if self._compare_param_with_ird():
+                        self._validate_jb_folder(self.current_jb)
             self.after(0, finish_and_maybe_validate)
 
         except Exception as ex:
@@ -550,11 +672,11 @@ class App(ctk.CTk):
         size = os.path.getsize(path)
         with open(path, "rb") as f:
             if size <= mmap_threshold:
-                # mmap the whole file
+                # mmap the whole file (2 GB)
                 with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
                     h.update(mm)
             else:
-                # stream in chunks
+                # stream in chunks (4 MB)
                 while chunk := f.read(chunk_size):
                     h.update(chunk)
         return h.hexdigest(), size
@@ -579,7 +701,7 @@ class App(ctk.CTk):
             self._set_status_threadsafe("Validating files...")
             self.progress_lbl.configure(text=f"0 / {total_files} files")
 
-            file_queue = queue.Queue(maxsize=10)  # buffer between producer and workers
+            file_queue = queue.Queue(maxsize=20)  # buffer between producer and workers
             cpu_total = os.cpu_count() or 4
             num_workers = max(1, cpu_total // 2)
 
@@ -642,7 +764,7 @@ class App(ctk.CTk):
                 mismatch = self._summary_counts["mismatch"]
                 summary = f"Validation finished.\nOK: {ok}\nMissing: {missing}\nMismatch: {mismatch}\n"
                 self._set_busy(False, "Validation complete.")
-                messagebox.showinfo("JB Validation", summary)
+                messagebox.showinfo("Game Validation", summary)
                 self._summary_counts = {"ok": 0, "missing": 0, "mismatch": 0}
 
             self.after(150, finish_when_quiet)
