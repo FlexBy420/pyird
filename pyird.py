@@ -285,7 +285,7 @@ class App(ctk.CTk):
         ctk.set_appearance_mode("system")
         ctk.set_default_color_theme("blue")
 
-        self.title("PYIRD v2.3.2 (Experimental)")
+        self.title("PYIRD v2.3.3 (Experimental)")
         self.geometry("1300x740")
         self.minsize(1100, 680)
 
@@ -670,6 +670,9 @@ class App(ctk.CTk):
     def _md5_of_file(path: str, chunk_size: int = 4 * 1024 * 1024, mmap_threshold: int = 2048 * 1024 * 1024) -> tuple[str, int]:
         h = hashlib.md5()
         size = os.path.getsize(path)
+        # special case: empty file
+        if size == 0:
+            return h.hexdigest(), 0
         with open(path, "rb") as f:
             if size <= mmap_threshold:
                 # mmap the whole file (2 GB)
