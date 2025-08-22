@@ -8,10 +8,139 @@ import queue
 import math
 import hashlib
 import mmap
+import requests
+import json
 import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
 import customtkinter as ctk
 from tkinter import ttk, filedialog, messagebox
+
+APP_ROOT = os.path.dirname(os.path.abspath(__file__))
+IRD_DIR = os.path.join(APP_ROOT, "ird")
+
+BASE_IRD_URL = "https://github.com/FlexBy420/playstation_3_ird_database/raw/main/"
+JSON_URL = "https://flexby420.github.io/playstation_3_ird_database/all.json"
+
+def load_local_ird(title_id, app_ver, game_ver, fw_ver, update_ver=None):
+    if not title_id:
+        return None
+    title_id = title_id.upper()
+    if not os.path.exists(IRD_DIR):
+        return None
+
+    for f in os.listdir(IRD_DIR):
+        if f.upper().startswith(title_id) and f.lower().endswith(".ird"):
+            path = os.path.join(IRD_DIR, f)
+            try:
+                with open(path, "rb") as fp:
+                    content = fp.read()
+                content = uncompress_gzip(content)
+
+                magic = struct.unpack("<I", content[:4])[0]
+                if magic != Ird.MAGIC:
+                    continue  # skip invalid
+
+                ird = parse_ird_content(content)
+
+                # strict check
+                if (ird.product_code.upper() == title_id and
+                    ird.app_version.strip() == (app_ver or "").strip() and
+                    ird.game_version.strip() == (game_ver or "").strip() and
+                    ird.update_version.strip() == (update_ver or "").strip()):
+                    return path
+            except Exception as e:
+                print(f"Failed to check local IRD {path}: {e}")
+                continue
+    return None
+
+def _norm(s):
+    return (s or "").strip()
+
+def _fw_tuple(s):
+    s = _norm(s)
+    parts = []
+    for p in s.split("."):
+        try:
+            parts.append(int(p))
+        except ValueError:
+            parts.append(0)
+    return tuple(parts)
+
+def fetch_remote_ird(title_id, app_ver, game_ver, fw_ver):
+    title_id = (title_id or "").upper()
+    app_ver  = (app_ver or "").strip()
+    game_ver = (game_ver or "").strip()
+    fw_ver   = (fw_ver or "").strip()
+
+    resp = requests.get(JSON_URL, timeout=20)
+    resp.raise_for_status()
+    ird_data = resp.json()
+
+    if title_id not in ird_data:
+        return None
+
+    for entry in ird_data[title_id]:
+        if ((entry.get("app-ver") or "").strip() == app_ver and
+            (entry.get("game-ver") or "").strip() == game_ver and
+            (entry.get("fw-ver") or "").strip() == fw_ver):
+
+            # build local file path
+            fname = os.path.basename(entry["link"])
+            if not fname.lower().endswith(".ird"):
+                fname += ".ird"
+            local_path = os.path.join(IRD_DIR, fname)
+
+            # download file
+            os.makedirs(IRD_DIR, exist_ok=True)
+            url = BASE_IRD_URL + entry["link"]
+            r = requests.get(url, timeout=30)
+            r.raise_for_status()
+            with open(local_path, "wb") as f:
+                f.write(r.content)
+            return local_path
+
+    # no exact match
+    return None
+
+def auto_get_ird(param_sfo):
+    title_id = (param_sfo or {}).get("TITLE_ID")
+    app_ver  = (param_sfo or {}).get("APP_VER")
+    game_ver = (param_sfo or {}).get("VERSION")
+    update_ver = (param_sfo or {}).get("UPDATE_VER")
+
+    # normalize FW_VER from PS3_SYSTEM_VER
+    fw_ver = (param_sfo or {}).get("PS3_SYSTEM_VER")
+    if fw_ver:
+        # "043.3100" -> "4.31"
+        fw_ver = fw_ver.lstrip("0")
+        if fw_ver.endswith("00"):
+            fw_ver = fw_ver[:-2]
+        if fw_ver.startswith("0"):
+            fw_ver = fw_ver[1:]
+
+    if not title_id:
+        messagebox.showwarning("IRD Auto", "Missing TITLE_ID in PARAM.SFO")
+        return None
+
+    # local check
+    local = load_local_ird(title_id, app_ver, game_ver, fw_ver, update_ver)
+    if local:
+        return local
+
+    # remote fetch
+    try:
+        remote = fetch_remote_ird(title_id, app_ver, game_ver, fw_ver)
+        if remote:
+            return remote
+        else:
+            messagebox.showwarning(
+                "IRD Auto",
+                f"No matching IRD found online for {title_id}\n"
+                f"(APP_VER={app_ver}, GAME_VER={game_ver}, UPDATE_VER={update_ver}, FW_VER={fw_ver})"
+            )
+    except Exception as e:
+        messagebox.showwarning("IRD Auto", f"Failed to fetch IRD: {e}")
+    return None
 
 def uncompress_gzip(data: bytes) -> bytes:
     if data[:2] == b"\x1f\x8b":  # gzip magic
@@ -285,7 +414,7 @@ class App(ctk.CTk):
         ctk.set_appearance_mode("system")
         ctk.set_default_color_theme("blue")
 
-        self.title("PYIRD v2.3.3 (Experimental)")
+        self.title("PYIRD v2.4 (Experimental)")
         self.geometry("1300x740")
         self.minsize(1100, 680)
 
@@ -543,7 +672,7 @@ class App(ctk.CTk):
             return
         self.loaded_ird_var.set(f"Loaded IRD: {os.path.basename(path)}")
         self.status_var.set("")
-        self._load_ird(path)
+        self._load_ird(path, source="user")
         if not self._compare_param_with_ird():
             return
 
@@ -571,13 +700,22 @@ class App(ctk.CTk):
             except Exception as e:
                 messagebox.showwarning("PARAM.SFO", f"Failed to parse PARAM.SFO: {e}")
 
-        if self.current_ird and self.current_ird.files:
-            self._validate_jb_folder(root)
+        # auto ird fetch
+        ird_path = auto_get_ird(self.param_sfo)
+        if ird_path:
+            self._load_ird(ird_path, source="auto")
+        else:
+            self.status_var.set("IRD not found for this game.")
 
     def clear_table(self):
         self._clear_table()
 
-    def _load_ird(self, path: str):
+    def _load_ird(self, path: str, source: str = "user"):
+        if source == "user":
+            self.loaded_ird_var.set(f"Loaded IRD: {os.path.basename(path)}")
+        elif source == "auto":
+            self.loaded_ird_var.set(f"Auto-Fetched IRD: {os.path.basename(path)}")
+
         self._set_busy(True, "Reading file...")
         t = threading.Thread(target=self._parse_and_fill, args=(path,), daemon=True)
         t.start()
@@ -612,13 +750,31 @@ class App(ctk.CTk):
                         size = ""
                     self._add_table_row([
                         name,
-                        #str(ird_file.offset),
                         str(size),
                         ird_file.md5_checksum.hex(),
                         "",  # jb_size
                         "",  # jb_md5
                         ""   # result
                     ])
+
+                # extra file
+                if self.current_jb:
+                    file_map = self._build_case_insensitive_file_map(self.current_jb)
+                    ird_set = set(self._normalize_path_for_match(f['name']) for f in ird.iso_files)
+                    extra_files = [full_path for rel_path, full_path in file_map.items()
+                                   if self._normalize_path_for_match(rel_path) not in ird_set]
+
+                    for full_path in extra_files:
+                        rel_path = os.path.relpath(full_path, self.current_jb).replace("\\", "/")
+                        self.tree.insert("", 0, values=[
+                            rel_path,
+                            "",  # size
+                            "",  # md5 IRD
+                            "",  # size JB
+                            "",  # md5 JB
+                            "Extra File"
+                        ], tags=("extra",))
+                    self.tree.tag_configure("extra", background="#d0f0ff")
 
                 # update info section
                 vals = [
