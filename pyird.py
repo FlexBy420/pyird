@@ -15,8 +15,13 @@ from concurrent.futures import ThreadPoolExecutor
 import customtkinter as ctk
 from tkinter import ttk, filedialog, messagebox
 
-APP_ROOT = os.path.dirname(os.path.abspath(__file__))
+if getattr(sys, "frozen", False):
+    APP_ROOT = os.path.dirname(os.path.abspath(sys.argv[0]))
+else:
+    APP_ROOT = os.path.dirname(os.path.abspath(__file__))
+
 IRD_DIR = os.path.join(APP_ROOT, "ird")
+os.makedirs(IRD_DIR, exist_ok=True)
 
 BASE_IRD_URL = "https://github.com/FlexBy420/playstation_3_ird_database/raw/main/"
 JSON_URL = "https://flexby420.github.io/playstation_3_ird_database/all.json"
@@ -414,7 +419,7 @@ class App(ctk.CTk):
         ctk.set_appearance_mode("system")
         ctk.set_default_color_theme("blue")
 
-        self.title("PYIRD v2.4 (Experimental)")
+        self.title("PYIRD v2.4.1 (Experimental)")
         self.geometry("1300x740")
         self.minsize(1100, 680)
 
