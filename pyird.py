@@ -10,6 +10,7 @@ import hashlib
 import mmap
 import requests
 import json
+import sys
 import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
 import customtkinter as ctk
@@ -141,7 +142,7 @@ def auto_get_ird(param_sfo):
             messagebox.showwarning(
                 "IRD Auto",
                 f"No matching IRD found online for {title_id}\n"
-                f"(APP_VER={app_ver}, GAME_VER={game_ver}, UPDATE_VER={update_ver}, FW_VER={fw_ver})"
+                f"App Version={app_ver}\nGame Version={game_ver}\nUpdate Version={fw_ver}"
             )
     except Exception as e:
         messagebox.showwarning("IRD Auto", f"Failed to fetch IRD: {e}")
