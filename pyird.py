@@ -501,6 +501,7 @@ class App(ctk.CTk):
             self.tree.column(col, anchor="w", width=150, stretch=True)
 
         self._rows = []  # store tree item IDs
+        self._extra_rows = []
 
         self.current_ird = None
         self.current_jb = None
@@ -534,9 +535,10 @@ class App(ctk.CTk):
         self.after(0, lambda: self.status_var.set(msg))
 
     def _clear_table(self):
-        for iid in self._rows:
+        for iid in self._rows + self._extra_rows:
             self.tree.delete(iid)
         self._rows.clear()
+        self._extra_rows.clear()
 
     def reset_app_state(self):
         # Clear IRD and JB data
@@ -594,6 +596,7 @@ class App(ctk.CTk):
                 self.tree.tag_configure("ok", background="#eaffea")
                 self.tree.tag_configure("missing", background="#ffecec")
                 self.tree.tag_configure("mismatch", background="#fff5d6")
+                self.tree.tag_configure("extra", background="#d0f0ff")
                 self.tree.item(self._rows[idx], tags=(tag,))
 
                 if tag in ("missing", "mismatch"):
@@ -766,7 +769,7 @@ class App(ctk.CTk):
 
                     for full_path in extra_files:
                         rel_path = os.path.relpath(full_path, self.current_jb).replace("\\", "/")
-                        self.tree.insert("", 0, values=[
+                        iid = self.tree.insert("", 0, values=[
                             rel_path,
                             "",  # size
                             "",  # md5 IRD
@@ -774,7 +777,7 @@ class App(ctk.CTk):
                             "",  # md5 JB
                             "Extra File"
                         ], tags=("extra",))
-                    self.tree.tag_configure("extra", background="#d0f0ff")
+                        self._extra_rows.append(iid)
 
                 # update info section
                 vals = [
