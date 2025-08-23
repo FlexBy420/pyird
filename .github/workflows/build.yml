@@ -45,7 +45,7 @@ jobs:
       - name: Build Executable (MacOS)
         if: ${{ matrix.os == 'macos-13' }}
         run: |
-          pyinstaller pyird.py --noconfirm --noconsole --onefile --target-arch universal2
+          pyinstaller pyird.py --noconfirm --noconsole --target-arch universal2
 
           mkdir macos
           cp dist/pyird macos
