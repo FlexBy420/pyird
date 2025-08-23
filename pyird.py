@@ -420,7 +420,7 @@ class App(ctk.CTk):
         ctk.set_appearance_mode("system")
         ctk.set_default_color_theme("blue")
 
-        self.title("PYIRD v2.4.1 (Experimental)")
+        self.title("PYIRD v2.4.2 (Experimental)")
         self.geometry("1300x740")
         self.minsize(1100, 680)
 
