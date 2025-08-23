@@ -20,8 +20,8 @@ jobs:
       - name: Install Python (MacOS)
         if: ${{ matrix.os == 'macos-13' }}
         run: |
-          curl -O https://www.python.org/ftp/python/3.10.18/python-3.10.18-macos11-universal2.pkg
-          sudo installer -pkg python-3.10.18-macos11-universal2.pkg -target /
+          wget https://www.python.org/ftp/python/3.10.6/python-3.10.6-macos11.pkg
+          sudo installer -verbose -pkg ./python-3.10.6-macos11.pkg -target /
           export PATH="/Library/Frameworks/Python.framework/Versions/3.10/bin:$PATH"
           python3 -m ensurepip
           python3 -m pip install --upgrade pip pyinstaller
