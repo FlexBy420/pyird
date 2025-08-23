@@ -17,12 +17,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v3
 
-      - name: Install  Python (MacOS)
+      - name: Install Python (MacOS)
         if: ${{ matrix.os == 'macos-13' }}
         run: |
           curl -O https://www.python.org/ftp/python/3.10.18/python-3.10.18-macos11-universal2.pkg
           sudo installer -pkg python-3.10.18-macos11-universal2.pkg -target /
-          echo "/Library/Frameworks/Python.framework/Versions/3.10/bin" >> $GITHUB_PATH
+          export PATH="/Library/Frameworks/Python.framework/Versions/3.10/bin:$PATH"
+          python3 -m ensurepip
+          python3 -m pip install --upgrade pip pyinstaller
 
       - name: Install Python (Windows)      
         if: ${{ matrix.os == 'windows-latest' }}
@@ -46,12 +48,10 @@ jobs:
       - name: Build Executable (MacOS)
         if: ${{ matrix.os == 'macos-13' }}
         run: |
-          python3 -m pip install --upgrade pip pyinstaller
-          pyinstaller pyird.py --noconfirm --noconsole --target-arch universal2
-
-          mkdir macos
-          cp dist/pyird macos
-          (cd macos/ && zip -r -X ../pyird_MacOS.zip .)
+          python3 -m pyinstaller pyird.py --noconfirm --noconsole --target-arch universal2
+          mkdir -p macos
+          cp -R dist/pyird macos/
+          (cd macos && zip -r -X ../pyird_MacOS.zip .)
 
       - name: Build Executable (Windows)
         if: ${{ matrix.os == 'windows-latest' }}
