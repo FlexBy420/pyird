@@ -1,0 +1,176 @@
+name: Build Workflow
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  build_matrix:
+    strategy:
+      matrix:
+        os: [windows-latest, macos-13, ubuntu-latest]
+    
+    if: github.event.pull_request.merged == true
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Install Python (MacOS)
+        if: ${{ matrix.os == 'macos-13' }}
+        run: |
+          wget https://www.python.org/ftp/python/3.10.6/python-3.10.6-macos11.pkg
+          sudo installer -verbose -pkg ./python-3.10.6-macos11.pkg -target /
+          echo "/Library/Frameworks/Python.framework/Versions/3.10/bin" >> $GITHUB_PATH
+
+      - name: Install Python (Windows)      
+        if: ${{ matrix.os == 'windows-latest' }}
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.10'
+          architecture: 'x64'
+
+      - name: Install Python (Linux)
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.10'
+          architecture: 'x64'
+      
+      - name: Install Requirements
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build Executable (MacOS)
+        if: ${{ matrix.os == 'macos-13' }}
+        run: |
+          pyinstaller pyird.py -w --onefile
+          mkdir macos
+          cp dist/pyird macos
+          (cd macos/ && zip -r -X ../pyird_MacOS.zip .)
+
+      - name: Build Executable (Windows)
+        if: ${{ matrix.os == 'windows-latest' }}
+        run: |
+          pyinstaller pyird.py -w --onefile"
+          mkdir windows
+          cp dist/pyird.exe windows
+          Compress-Archive -Path "windows/*" -DestinationPath pyird_Windows.zip
+
+      - name: Build Executable (Linux)
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        run: |
+          pyinstaller pyird.py -w --onefile
+          mkdir linux
+          cp dist/pyird linux
+          (cd linux/ && zip -r -X ../pyird_Linux.zip .)
+
+      - name: Upload Artifact (MacOS)
+        if: ${{ matrix.os == 'macos-13' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: pyird_MacOS.zip
+          path: pyird_MacOS.zip
+
+      - name: Upload Artifact (Windows)
+        if: ${{ matrix.os == 'windows-latest' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: pyird_Windows.zip
+          path: pyird_Windows.zip
+
+      - name: Upload Artifact (Linux)
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: pyird_Linux.zip
+          path: pyird_Linux.zip
+
+  create_release:
+    needs: build_matrix
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          fetch-tags: true
+
+      - name: Get Next Version
+        id: version
+        run: |
+          latest_tag=$(git describe --tags --abbrev=0 || echo "v1.0.0")
+          
+          echo "Latest tag: $latest_tag"
+
+          version="${latest_tag#v}"
+          IFS='.' read -r major minor patch <<< "$version"
+
+          patch=$((patch + 1))
+          new_tag="v$major.$minor.$patch"
+
+          echo "Next version: $new_tag"
+
+          echo "new_tag=$new_tag" >> $GITHUB_ENV
+          echo "new_tag=$new_tag" >> $GITHUB_OUTPUT
+
+      - name: Download Artifacts (MacOS)
+        uses: actions/download-artifact@v4
+        with:
+          name: pyird_MacOS.zip
+          path: ./artifacts
+
+      - name: Download Artifacts (Windows)
+        uses: actions/download-artifact@v4
+        with:
+          name: pyird_Windows.zip
+          path: ./artifacts
+
+      - name: Download Artifacts (Linux)
+        uses: actions/download-artifact@v4
+        with:
+          name: pyird_Linux.zip
+          path: ./artifacts
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.version.outputs.new_tag }}
+          release_name: ${{ steps.version.outputs.new_tag }}
+          body: |
+            Automated release of pyird.
+          draft: false
+          prerelease: false
+
+      - name: Upload Release Asset (Windows)
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./artifacts/pyird_Windows.zip
+          asset_name: pyird_Windows.zip
+          asset_content_type: application/zip
+
+      - name: Upload Release Asset (MacOS)
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./artifacts/pyird_MacOS.zip
+          asset_name: pyird_MacOS.zip
+          asset_content_type: application/zip
+
+      - name: Upload Release Asset (Linux)
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./artifacts/pyird_Linux.zip
+          asset_name: pyird_Linux.zip
+          asset_content_type: application/zip
