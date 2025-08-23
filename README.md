@@ -7,6 +7,14 @@ Windows
 ------------------------
 Just download pyird_Windows.zip from [Releases](https://github.com/FlexBy420/pyird/releases/latest), extract the folder, and run the .exe.
 
+Linux (WIP)
+------------------------
+Just download pyird_Linux.zip from [Releases](https://github.com/FlexBy420/pyird/releases/latest), extract the folder, and run the executable.
+
+MacOS
+------------------------
+WIP
+
 ## Using pyird
 
 Once the program is open, click **“Select Game Folder”** and choose a folder containing `PS3_GAME`.
