@@ -37,11 +37,21 @@ jobs:
         with:
           python-version: '3.10'
           architecture: 'x64'
-      
-      - name: Install Requirements
+
+      - name: Install Requirements (MacOS)
+        if: ${{ matrix.os == 'macos-13' }}
+        run: |
+          pip3 install -r requirements.txt
+
+      - name: Install Requirements (Windows)
+        if: ${{ matrix.os == 'windows-latest' }}
         run: |
           pip install -r requirements.txt
-          pip install pyinstaller
+
+      - name: Install Requirements (Linux)
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        run: |
+          pip install -r requirements.txt
 
       - name: Build Executable (MacOS)
         if: ${{ matrix.os == 'macos-13' }}
