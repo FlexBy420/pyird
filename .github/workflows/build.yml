@@ -17,12 +17,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v3
 
-      - name: Install Python and PyInstaller (MacOS)
+      - name: Install Python (MacOS)
         if: ${{ matrix.os == 'macos-13' }}
         run: |
-          wget https://www.python.org/ftp/python/3.13.7/python-3.13.7-macos11.pkg
-          sudo installer -verbose -pkg ./python-3.13.7-macos11.pkg -target /
-          echo "/Library/Frameworks/Python.framework/Versions/3.13/bin" >> $GITHUB_PATH
+          wget https://www.python.org/ftp/python/3.11.9/python-3.11.9-macos11.pkg
+          sudo installer -verbose -pkg ./python-3.11.9-macos11.pkg -target /
+          echo "/Library/Frameworks/Python.framework/Versions/3.11/bin" >> $GITHUB_PATH
 
       - name: Install Python (Windows)      
         if: ${{ matrix.os == 'windows-latest' }}
