@@ -109,18 +109,17 @@ jobs:
       - name: Get Next Version
         id: version
         run: |
+          git fetch --tags
+
           latest_tag=$(git describe --tags --abbrev=0 || echo "v1.0.0")
-          
           echo "Latest tag: $latest_tag"
 
           version="${latest_tag#v}"
           IFS='.' read -r major minor patch <<< "$version"
-
           patch=$((patch + 1))
           new_tag="v$major.$minor.$patch"
 
           echo "Next version: $new_tag"
-
           echo "new_tag=$new_tag" >> $GITHUB_ENV
           echo "new_tag=$new_tag" >> $GITHUB_OUTPUT
 
