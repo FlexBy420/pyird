@@ -19,10 +19,9 @@ jobs:
 
       - name: Install Python (MacOS)
         if: ${{ matrix.os == 'macos-13' }}
-        run: |
-          wget https://www.python.org/ftp/python/3.11.9/python-3.11.9-macos11.pkg
-          sudo installer -verbose -pkg ./python-3.11.9-macos11.pkg -target /
-          echo "/Library/Frameworks/Python.framework/Versions/3.11/bin" >> $GITHUB_PATH
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
 
       - name: Install Python (Windows)      
         if: ${{ matrix.os == 'windows-latest' }}
@@ -56,10 +55,10 @@ jobs:
       - name: Build Executable (MacOS)
         if: ${{ matrix.os == 'macos-13' }}
         run: |
-          pyinstaller pyird.py --noconfirm --noconsole --target-arch universal2
-          mkdir -p macos
-          cp -R dist/pyird macos/
-          (cd macos && zip -r -X ../pyird_MacOS.zip .)
+          pyinstaller pyird.py --noconfirm --noconsole --onefile
+          mkdir macos
+          cp dist/pyird macos
+          (cd macos/ && zip -r -X ../pyird_MacOS.zip .)
 
       - name: Build Executable (Windows)
         if: ${{ matrix.os == 'windows-latest' }}
