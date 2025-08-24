@@ -11,6 +11,7 @@ import mmap
 import requests
 import json
 import sys
+import re
 import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
 import customtkinter as ctk
@@ -30,33 +31,39 @@ JSON_URL = "https://flexby420.github.io/playstation_3_ird_database/all.json"
 def load_local_ird(title_id, app_ver, game_ver, fw_ver, update_ver=None):
     if not title_id:
         return None
-    title_id = title_id.upper()
+    normalized_title_id = title_id.replace("-", "").upper()
     if not os.path.exists(IRD_DIR):
         return None
 
     for f in os.listdir(IRD_DIR):
-        if f.upper().startswith(title_id) and f.lower().endswith(".ird"):
-            path = os.path.join(IRD_DIR, f)
-            try:
-                with open(path, "rb") as fp:
-                    content = fp.read()
-                content = uncompress_gzip(content)
+        if not f.lower().endswith(".ird"):
+            continue
 
-                magic = struct.unpack("<I", content[:4])[0]
-                if magic != Ird.MAGIC:
-                    continue  # skip invalid
+        name_without_ext = os.path.splitext(f)[0].replace("-", "").replace(" ", "").upper()
+        if not name_without_ext.startswith(normalized_title_id):
+            continue
 
-                ird = parse_ird_content(content)
+        path = os.path.join(IRD_DIR, f)
+        try:
+            with open(path, "rb") as fp:
+                content = fp.read()
+            content = uncompress_gzip(content)
 
-                # strict check
-                if (ird.product_code.upper() == title_id and
-                    ird.app_version.strip() == (app_ver or "").strip() and
-                    ird.game_version.strip() == (game_ver or "").strip() and
-                    ird.update_version.strip() == (update_ver or "").strip()):
-                    return path
-            except Exception as e:
-                print(f"Failed to check local IRD {path}: {e}")
+            magic = struct.unpack("<I", content[:4])[0]
+            if magic != Ird.MAGIC:
                 continue
+
+            ird = parse_ird_content(content)
+
+            if (ird.product_code.upper() == title_id and
+                (not app_ver or ird.app_version.strip() == app_ver.strip()) and
+                (not game_ver or ird.game_version.strip() == game_ver.strip()) and
+                (not update_ver or ird.update_version.strip() == update_ver.strip())):
+                return path
+
+        except Exception as e:
+            print(f"Failed to check local IRD {path}: {e}")
+            continue
     return None
 
 def _norm(s):
