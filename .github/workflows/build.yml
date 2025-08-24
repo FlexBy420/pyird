@@ -5,6 +5,8 @@ on:
   push:
     branches:
       - main
+    paths:
+      - pyird.py 
 
 jobs:
   build_matrix:
@@ -142,6 +144,14 @@ jobs:
           name: pyird_Linux.zip
           path: ./artifacts
 
+      - name: Generate Changelog
+        id: changelog
+        run: |
+          changelog=$(git log $(git describe --tags --abbrev=0)..HEAD --pretty=format:"- %an: %s")
+          echo "changelog<<EOF" >> $GITHUB_OUTPUT
+          echo "$changelog" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
       - name: Create Release
         id: create_release
         uses: actions/create-release@v1
@@ -150,8 +160,7 @@ jobs:
         with:
           tag_name: ${{ steps.version.outputs.new_tag }}
           release_name: ${{ steps.version.outputs.new_tag }}
-          body: |
-            Automated release of pyird.
+          body: ${{ steps.changelog.outputs.changelog }}
           draft: false
           prerelease: false
 
