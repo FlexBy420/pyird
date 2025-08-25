@@ -3,10 +3,13 @@ permissions:
   contents: write
 on:
   pull_request:
+    paths:
+      - pyird.py
+  push:
     branches:
       - main
     paths:
-      - pyird.py 
+      - pyird.py
 
 jobs:
   build_matrix:
