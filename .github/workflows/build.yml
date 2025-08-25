@@ -2,11 +2,14 @@ name: Build Workflow
 permissions:
   contents: write
 on:
+  pull_request:
+    paths:
+      - pyird.py
   push:
     branches:
       - main
     paths:
-      - pyird.py 
+      - pyird.py
 
 jobs:
   build_matrix:
@@ -102,6 +105,7 @@ jobs:
   create_release:
     needs: build_matrix
     runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - name: Checkout
         uses: actions/checkout@v3
