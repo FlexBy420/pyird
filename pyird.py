@@ -36,20 +36,47 @@ JSON_URL = "https://flexby420.github.io/playstation_3_ird_database/all.json"
 class Logger:
     def __init__(self, logfile_path):
         self.terminal = sys.stdout
-        self.log = open(logfile_path, "a", encoding="utf-8")
+        try:
+            self.log = open(logfile_path, "a", encoding="utf-8")
+        except Exception as e:
+            self.log = None
+            self.terminal.write(f"[LOGGER INIT ERROR] Could not open log file: {e}\n")
 
     def write(self, message):
         message = message.rstrip("\n")
-        if message:  # skip empty lines
-            timestamped = f"[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}] {message}\n"
+        if not message:
+            return
+        timestamped = f"[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}] {message}\n"
+
+        # Always print to console
+        try:
             self.terminal.write(timestamped)
-            self.log.write(timestamped)
+        except Exception:
+            pass
+
+        # Safely log to file
+        if self.log:
+            try:
+                self.log.write(timestamped)
+                self.log.flush()
+            except Exception as e:
+                self.terminal.write(f"[LOGGER ERROR] Failed to write log: {e}\n")
+                self.log = None  # disable file logging if broken
 
     def flush(self):
-        self.terminal.flush()
-        self.log.flush()
+        try:
+            self.terminal.flush()
+        except Exception:
+            pass
+        if self.log:
+            try:
+                self.log.flush()
+            except Exception:
+                self.log = None
 
-sys.stdout = sys.stderr = Logger(LOG_FILE)
+logger = Logger(LOG_FILE)
+sys.stdout = logger
+sys.stderr = logger
 
 def log(msg: str):
     print(msg)
