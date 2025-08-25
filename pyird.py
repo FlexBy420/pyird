@@ -494,7 +494,7 @@ def human_size(n: int) -> str:
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
-        ctk.set_appearance_mode("system")
+        ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
 
         self.title("PYIRD (Experimental)")
@@ -532,7 +532,7 @@ class App(ctk.CTk):
 
         self.loaded_jb_var = ctk.StringVar(value="")
         self.loaded_jb_lbl = ctk.CTkLabel(self.main, textvariable=self.loaded_jb_var, font=("", 14, "bold"))
-        self.loaded_jb_lbl.grid(row=2, column=0, sticky="w", pady=(0, 6))
+        self.loaded_jb_lbl.grid(row=2, column=0, sticky="w", pady=(0,6))
 
         self._divider(self.main, 3)
 
@@ -579,9 +579,19 @@ class App(ctk.CTk):
         self.tree = ttk.Treeview(self.table_container, columns=self.table_headers, show="headings")
         self.tree.grid(row=0, column=0, sticky="nsew")
 
+        self.tree_scrollbar = ctk.CTkScrollbar(self.table_container, orientation="vertical", command=self.tree.yview)
+        self.tree_scrollbar.grid(row=0, column=1, sticky="ns")
+        self.tree.configure(yscrollcommand=self.tree_scrollbar.set)
+
         for col in self.table_headers:
             self.tree.heading(col, text=col)
             self.tree.column(col, anchor="w", width=150, stretch=True)
+
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure("Treeview", background="#1e1e1e", foreground="white", fieldbackground="#1e1e1e", rowheight=22, bordercolor="#3a3a3a", borderwidth=0,)
+        style.configure( "Treeview.Heading", background="#2b2b2b", foreground="white", relief="flat")
+        style.map("Treeview.Heading", background=[("active", "#444444")])
 
         self._rows = []  # store tree item IDs
         self._extra_rows = []
@@ -593,6 +603,17 @@ class App(ctk.CTk):
         self._result_q = queue.Queue()
         self._summary_counts = {"ok":0, "missing":0, "mismatch":0}
         self.after(50, self._drain_results)
+
+    def autosize_tree_columns(self):
+        self.update_idletasks()
+
+        for col in self.tree["columns"]:
+            max_width = max(
+                [len(self.tree.heading(col, option="text"))] + 
+                [len(str(self.tree.set(iid, col))) for iid in self.tree.get_children()]
+            )
+            pixel_width = max_width * 7 + 20  # 20px padding
+            self.tree.column(col, width=pixel_width)
 
     def _divider(self, parent, row_index):
         sep = ttk.Separator(parent, orient="horizontal")
@@ -676,10 +697,10 @@ class App(ctk.CTk):
                 vals[4] = jb_md5 or ""
                 vals[5] = result or ""
                 self.tree.item(self._rows[idx], values=vals)
-                self.tree.tag_configure("ok", background="#eaffea")
-                self.tree.tag_configure("missing", background="#ffecec")
-                self.tree.tag_configure("mismatch", background="#fff5d6")
-                self.tree.tag_configure("extra", background="#d0f0ff")
+                self.tree.tag_configure("ok", background="#2e3b2e")
+                self.tree.tag_configure("missing", background="#3b2e2e")
+                self.tree.tag_configure("mismatch", background="#3b332e")
+                self.tree.tag_configure("extra", background="#435274")
                 self.tree.item(self._rows[idx], tags=(tag,))
 
                 if tag in ("missing", "mismatch"):
@@ -882,6 +903,7 @@ class App(ctk.CTk):
                     var.set(v)
 
             self.after(0, apply_rows)
+            self.after(50, self.autosize_tree_columns)
 
             def finish_and_maybe_validate():
                 self._set_busy(False, "Done.")
