@@ -12,6 +12,7 @@ import requests
 import json
 import sys
 import re
+import datetime
 import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
 import customtkinter as ctk
@@ -25,8 +26,33 @@ else:
 IRD_DIR = os.path.join(APP_ROOT, "ird")
 os.makedirs(IRD_DIR, exist_ok=True)
 
+LOG_DIR = os.path.join(APP_ROOT, "logs")
+os.makedirs(LOG_DIR, exist_ok=True)
+LOG_FILE = os.path.join(LOG_DIR, f"{datetime.date.today():%Y-%m-%d}.log")
+
 BASE_IRD_URL = "https://github.com/FlexBy420/playstation_3_ird_database/raw/main/"
 JSON_URL = "https://flexby420.github.io/playstation_3_ird_database/all.json"
+
+class Logger:
+    def __init__(self, logfile_path):
+        self.terminal = sys.stdout
+        self.log = open(logfile_path, "a", encoding="utf-8")
+
+    def write(self, message):
+        message = message.rstrip("\n")
+        if message:  # skip empty lines
+            timestamped = f"[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}] {message}\n"
+            self.terminal.write(timestamped)
+            self.log.write(timestamped)
+
+    def flush(self):
+        self.terminal.flush()
+        self.log.flush()
+
+sys.stdout = sys.stderr = Logger(LOG_FILE)
+
+def log(msg: str):
+    print(msg)
 
 def load_local_ird(title_id, app_ver, game_ver, fw_ver, update_ver=None):
     if not title_id:
@@ -62,7 +88,7 @@ def load_local_ird(title_id, app_ver, game_ver, fw_ver, update_ver=None):
                 return path
 
         except Exception as e:
-            print(f"Failed to check local IRD {path}: {e}")
+            log(f"Failed to check local IRD {path}: {e}")
             continue
     return None
 
@@ -85,11 +111,16 @@ def fetch_remote_ird(title_id, app_ver, game_ver, fw_ver):
     game_ver = (game_ver or "").strip()
     fw_ver   = (fw_ver or "").strip()
 
-    resp = requests.get(JSON_URL, timeout=20)
-    resp.raise_for_status()
-    ird_data = resp.json()
+    try:
+        resp = requests.get(JSON_URL, timeout=20)
+        resp.raise_for_status()
+        ird_data = resp.json()
+    except requests.RequestException as e:
+        log(f"Failed to fetch IRD index JSON: {e}")
+        return None
 
     if title_id not in ird_data:
+        log(f"No IRD entries found for title {title_id}")
         return None
 
     for entry in ird_data[title_id]:
@@ -106,11 +137,23 @@ def fetch_remote_ird(title_id, app_ver, game_ver, fw_ver):
             # download file
             os.makedirs(IRD_DIR, exist_ok=True)
             url = BASE_IRD_URL + entry["link"]
-            r = requests.get(url, timeout=30)
-            r.raise_for_status()
-            with open(local_path, "wb") as f:
-                f.write(r.content)
-            return local_path
+            try:
+                r = requests.get(url, timeout=30)
+                r.raise_for_status()
+                with open(local_path, "wb") as f:
+                    f.write(r.content)
+                log(f"IRD downloaded successfully: {local_path}")
+                return local_path
+            except requests.RequestException as e:
+                log(f"Failed to download IRD from {url}: {e}")
+                messagebox.showwarning(
+                    "IRD Download Failed",
+                    f"Failed to download IRD for {title_id} from {url}.\nError: {e}"
+                )
+                return None
+            except Exception as e:
+                log(f"Unexpected error while saving IRD: {e}")
+                return None
 
     # no exact match
     return None
@@ -396,7 +439,7 @@ def parse_ird_content(content: bytes) -> Ird:
 
     calculated_crc = crc32(content[:data_length]) & 0xFFFFFFFF
     if result.crc32 != calculated_crc:
-        print(f"Warning: CRC32 mismatch ({result.crc32:08x} != {calculated_crc:08x})")
+        log(f"Warning: CRC32 mismatch ({result.crc32:08x} != {calculated_crc:08x})")
 
     # Parse ISO
     try:
@@ -405,7 +448,7 @@ def parse_ird_content(content: bytes) -> Ird:
         result.disc_size = iso_header.disc_size_bytes
         result.iso_files = iso_header.files
     except Exception as e:
-        print("ISO parse failed:", e)
+        log("ISO parse failed:", e)
 
     return result
 
@@ -691,11 +734,13 @@ class App(ctk.CTk):
         self._load_ird(path, source="user")
         if not self._compare_param_with_ird():
             return
+        log(f"User selected IRD file: {path}")
 
     def pick_folder(self):
         root = filedialog.askdirectory(title="Select Game Folder (contains PS3_GAME, etc.)")
         if not root:
             return
+        log(f"User selected game folder: {root}")
         
         self.reset_app_state()
 
@@ -720,8 +765,10 @@ class App(ctk.CTk):
         ird_path = auto_get_ird(self.param_sfo)
         if ird_path:
             self._load_ird(ird_path, source="auto")
+            log(f"Auto-fetched IRD for game: {ird_path}")
         else:
             self.status_var.set("IRD not found for this game.")
+            log("No IRD found online for the selected game")
 
     def clear_table(self):
         self._clear_table()
@@ -738,6 +785,7 @@ class App(ctk.CTk):
 
     def _parse_and_fill(self, path: str):
         try:
+            log(f"Loading IRD from: {path}")
             with open(path, "rb") as f:
                 content = f.read()
             content = uncompress_gzip(content)
@@ -747,6 +795,7 @@ class App(ctk.CTk):
                 raise ValueError("Not a valid IRD file")
 
             self._set_status_threadsafe("Parsing IRD header...")
+            log(f"Parsing IRD file: {path}")
             ird = parse_ird_content(content)
             self.current_ird = ird
 
