@@ -202,7 +202,7 @@ def auto_get_ird(param_sfo):
             fw_ver = fw_ver[1:]
 
     if not title_id:
-        messagebox.showwarning("IRD Auto", "Missing TITLE_ID in PARAM.SFO")
+        messagebox.showwarning("IRD Auto", "Online Fetch failed!\nPlease try selecting IRD manually.\nMissing TITLE_ID in PARAM.SFO")
         return None
 
     # local check
@@ -601,7 +601,7 @@ class App(ctk.CTk):
         self.param_sfo = None
 
         self._result_q = queue.Queue()
-        self._summary_counts = {"ok":0, "missing":0, "mismatch":0}
+        self._summary_counts = {"ok":0, "missing":0, "invalid":0}
         self.after(50, self._drain_results)
 
     def autosize_tree_columns(self):
@@ -665,7 +665,7 @@ class App(ctk.CTk):
         self.progress_lbl.configure(text="Working...")
 
         # Reset summary counts
-        self._summary_counts = {"ok": 0, "missing": 0, "mismatch": 0}
+        self._summary_counts = {"ok": 0, "missing": 0, "invalid": 0}
 
         # Disable IRD button until a new folder is loaded
         self.pick_btn.configure(state="disabled")
@@ -678,7 +678,7 @@ class App(ctk.CTk):
                 break
 
     def _add_table_row(self, values: list[str], tag: str = ""):
-        if tag in ("missing", "mismatch"):
+        if tag in ("missing", "invalid"):
             iid = self.tree.insert("", 0, values=values, tags=(tag,))
             self._rows.insert(0, iid)
         else:
@@ -697,13 +697,13 @@ class App(ctk.CTk):
                 vals[4] = jb_md5 or ""
                 vals[5] = result or ""
                 self.tree.item(self._rows[idx], values=vals)
-                self.tree.tag_configure("ok", background="#2e3b2e")
-                self.tree.tag_configure("missing", background="#3b2e2e")
-                self.tree.tag_configure("mismatch", background="#3b332e")
+                self.tree.tag_configure("ok", background="#2E8B57")
+                self.tree.tag_configure("missing", background="#9B1313")
+                self.tree.tag_configure("invalid", background="#C76E00")
                 self.tree.tag_configure("extra", background="#435274")
                 self.tree.item(self._rows[idx], tags=(tag,))
 
-                if tag in ("missing", "mismatch"):
+                if tag in ("missing", "invalid"):
                     self.tree.move(self._rows[idx], "", 0)
 
             if tag in self._summary_counts:
@@ -965,7 +965,7 @@ class App(ctk.CTk):
             while not self._result_q.empty():
                 try: self._result_q.get_nowait()
                 except queue.Empty: break
-            self._summary_counts = {"ok": 0, "missing": 0, "mismatch": 0}
+            self._summary_counts = {"ok": 0, "missing": 0, "invalid": 0}
 
             total_files = len(ird.files)
             self._files_done = 0  # counter for progress
@@ -1008,11 +1008,11 @@ class App(ctk.CTk):
                         try:
                             md5_hex, size = self._md5_of_file(real_path)
                             md5_ok = (md5_hex.lower() == f.md5_checksum.hex().lower())
-                            status = "OK" if md5_ok else "Mismatch (md5)"
-                            status_class = "ok" if md5_ok else "mismatch"
+                            status = "OK" if md5_ok else "Invalid (md5)"
+                            status_class = "ok" if md5_ok else "invalid"
                             result = (idx, str(size), md5_hex, status, status_class)
                         except Exception as e:
-                            result = (idx, "", f"<error: {e}>", "Read error", "mismatch")
+                            result = (idx, "", f"<error: {e}>", "Read error", "invalid")
 
                     self._result_q.put(result)
 
@@ -1034,11 +1034,11 @@ class App(ctk.CTk):
                     return
                 ok = self._summary_counts["ok"]
                 missing = self._summary_counts["missing"]
-                mismatch = self._summary_counts["mismatch"]
-                summary = f"Validation finished.\nOK: {ok}\nMissing: {missing}\nMismatch: {mismatch}\n"
+                mismatch = self._summary_counts["invalid"]
+                summary = f"Validation finished.\nOK: {ok}\nInvalid: {mismatch}\nMissing: {missing}"
                 self._set_busy(False, "Validation complete.")
                 messagebox.showinfo("Game Validation", summary)
-                self._summary_counts = {"ok": 0, "missing": 0, "mismatch": 0}
+                self._summary_counts = {"ok": 0, "missing": 0, "invalid": 0}
 
             self.after(150, finish_when_quiet)
 
