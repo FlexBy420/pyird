@@ -189,7 +189,6 @@ def auto_get_ird(param_sfo):
     app_ver  = (param_sfo or {}).get("APP_VER")
     game_ver = (param_sfo or {}).get("VERSION")
     update_ver = (param_sfo or {}).get("UPDATE_VER")
-
     # normalize FW_VER from PS3_SYSTEM_VER
     fw_ver = (param_sfo or {}).get("PS3_SYSTEM_VER")
     if fw_ver:
