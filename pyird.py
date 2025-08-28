@@ -535,7 +535,7 @@ class App(ctk.CTk):
         self.loaded_jb_lbl.grid(row=2, column=0, sticky="w", pady=(0,6))
 
         self.validation_result_var = ctk.StringVar(value="")
-        self.validation_result_lbl = ctk.CTkLabel(self.main, textvariable=self.validation_result_var, font=("", 12, "bold"))
+        self.validation_result_lbl = ctk.CTkLabel(self.main, textvariable=self.validation_result_var, font=("", 14, "bold"))
         self.validation_result_lbl.grid(row=2, column=0, sticky="e", padx=(0,20))
 
         self._divider(self.main, 3)
