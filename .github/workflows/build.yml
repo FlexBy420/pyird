@@ -15,15 +15,21 @@ jobs:
   build_matrix:
     strategy:
       matrix:
-        os: [windows-latest, macos-13, ubuntu-latest]
+        os: [windows-latest, macos-13, macos-14, ubuntu-latest]
     
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v3
 
-      - name: Install Python (MacOS)
+      - name: Install Python (MacOS x64)
         if: ${{ matrix.os == 'macos-13' }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Python (MacOS ARM)
+        if: ${{ matrix.os == 'macos-14' }}
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
@@ -42,8 +48,13 @@ jobs:
           python-version: '3.10'
           architecture: 'x64'
 
-      - name: Install Requirements (MacOS)
+      - name: Install Requirements (MacOS x64)
         if: ${{ matrix.os == 'macos-13' }}
+        run: |
+          pip3 install -r requirements.txt
+
+      - name: Install Requirements (MacOS ARM)
+        if: ${{ matrix.os == 'macos-14' }}
         run: |
           pip3 install -r requirements.txt
 
@@ -57,13 +68,21 @@ jobs:
         run: |
           pip install -r requirements.txt
 
-      - name: Build Executable (MacOS)
+      - name: Build Executable (MacOS x64)
         if: ${{ matrix.os == 'macos-13' }}
         run: |
           pyinstaller pyird.py --noconfirm --noconsole --onefile
           mkdir macos
           cp dist/pyird macos
-          (cd macos/ && zip -r -X ../pyird_MacOS.zip .)
+          (cd macos/ && zip -r -X ../pyird_MacOS_x64.zip .)
+
+      - name: Build Executable (MacOS ARM)
+        if: ${{ matrix.os == 'macos-14' }}
+        run: |
+          pyinstaller pyird.py --noconfirm --noconsole --onefile
+          mkdir macos-arm
+          cp dist/pyird macos-arm
+          (cd macos-arm/ && zip -r -X ../pyird_MacOS_arm64.zip .)
 
       - name: Build Executable (Windows)
         if: ${{ matrix.os == 'windows-latest' }}
@@ -81,12 +100,19 @@ jobs:
           cp dist/pyird linux
           (cd linux/ && zip -r -X ../pyird_Linux.zip .)
 
-      - name: Upload Artifact (MacOS)
+      - name: Upload Artifact (MacOS x64)
         if: ${{ matrix.os == 'macos-13' }}
         uses: actions/upload-artifact@v4
         with:
-          name: pyird_MacOS.zip
-          path: pyird_MacOS.zip
+          name: pyird_MacOS_x64.zip
+          path: pyird_MacOS_x64.zip
+
+      - name: Upload Artifact (MacOS ARM)
+        if: ${{ matrix.os == 'macos-14' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: pyird_MacOS_arm64.zip
+          path: pyird_MacOS_arm64.zip
 
       - name: Upload Artifact (Windows)
         if: ${{ matrix.os == 'windows-latest' }}
@@ -130,10 +156,16 @@ jobs:
           echo "new_tag=$new_tag" >> $GITHUB_ENV
           echo "new_tag=$new_tag" >> $GITHUB_OUTPUT
 
-      - name: Download Artifacts (MacOS)
+      - name: Download Artifacts (MacOS x64)
         uses: actions/download-artifact@v4
         with:
-          name: pyird_MacOS.zip
+          name: pyird_MacOS_x64.zip
+          path: ./artifacts
+
+      - name: Download Artifacts (MacOS ARM)
+        uses: actions/download-artifact@v4
+        with:
+          name: pyird_MacOS_arm64.zip
           path: ./artifacts
 
       - name: Download Artifacts (Windows)
@@ -178,14 +210,24 @@ jobs:
           asset_name: pyird_Windows.zip
           asset_content_type: application/zip
 
-      - name: Upload Release Asset (MacOS)
+      - name: Upload Release Asset (MacOS x64)
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./artifacts/pyird_MacOS.zip
-          asset_name: pyird_MacOS.zip
+          asset_path: ./artifacts/pyird_MacOS_x64.zip
+          asset_name: pyird_MacOS_x64.zip
+          asset_content_type: application/zip
+
+      - name: Upload Release Asset (MacOS ARM)
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./artifacts/pyird_MacOS_arm64.zip
+          asset_name: pyird_MacOS_arm64.zip
           asset_content_type: application/zip
 
       - name: Upload Release Asset (Linux)
