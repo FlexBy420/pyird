@@ -13,7 +13,6 @@ import json
 import sys
 import re
 import datetime
-import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
 import customtkinter as ctk
 from tkinter import ttk, filedialog, messagebox
@@ -115,7 +114,7 @@ def load_local_ird(title_id, app_ver, game_ver, fw_ver, update_ver=None):
                 return path
 
         except Exception as e:
-            log(f"Failed to check local IRD {path}: {e}")
+            log(f"[ERROR] Failed to check local IRD {path}: {e}")
             continue
     return None
 
@@ -143,11 +142,11 @@ def fetch_remote_ird(title_id, app_ver, game_ver, fw_ver):
         resp.raise_for_status()
         ird_data = resp.json()
     except requests.RequestException as e:
-        log(f"Failed to fetch IRD index JSON: {e}")
+        log(f"[ERROR] Failed to fetch IRD index JSON: {e}")
         return None
 
     if title_id not in ird_data:
-        log(f"No IRD entries found for title {title_id}")
+        log(f"[WARNING] No IRD entries found for title {title_id}")
         return None
 
     for entry in ird_data[title_id]:
@@ -169,17 +168,17 @@ def fetch_remote_ird(title_id, app_ver, game_ver, fw_ver):
                 r.raise_for_status()
                 with open(local_path, "wb") as f:
                     f.write(r.content)
-                log(f"IRD downloaded successfully: {local_path}")
+                log(f"[INFO] IRD downloaded successfully: {local_path}")
                 return local_path
             except requests.RequestException as e:
-                log(f"Failed to download IRD from {url}: {e}")
+                log(f"[ERROR] Failed to download IRD from {url}: {e}")
                 messagebox.showwarning(
                     "IRD Download Failed",
                     f"Failed to download IRD for {title_id} from {url}.\nError: {e}"
                 )
                 return None
             except Exception as e:
-                log(f"Unexpected error while saving IRD: {e}")
+                log(f"[ERROR] Unexpected error while saving IRD: {e}")
                 return None
 
     # no exact match
@@ -222,6 +221,7 @@ def auto_get_ird(param_sfo):
                 f"App Version={app_ver}\nGame Version={game_ver}\nUpdate Version={fw_ver}"
             )
     except Exception as e:
+        log(f"[ERROR] Failed to fetch IRD: {e}")
         messagebox.showwarning("IRD Auto", f"Failed to fetch IRD: {e}")
     return None
 
@@ -466,7 +466,7 @@ def parse_ird_content(content: bytes) -> Ird:
 
     calculated_crc = crc32(content[:data_length]) & 0xFFFFFFFF
     if result.crc32 != calculated_crc:
-        log(f"Warning: CRC32 mismatch ({result.crc32:08x} != {calculated_crc:08x})")
+        log(f"[WARNING] CRC32 mismatch ({result.crc32:08x} != {calculated_crc:08x})")
 
     # Parse ISO
     try:
@@ -475,7 +475,7 @@ def parse_ird_content(content: bytes) -> Ird:
         result.disc_size = iso_header.disc_size_bytes
         result.iso_files = iso_header.files
     except Exception as e:
-        log("ISO parse failed:", e)
+        log(f"[ERROR] ISO parse failed: {e}")
 
     return result
 
@@ -523,7 +523,7 @@ class App(ctk.CTk):
 
         self.status_var = ctk.StringVar(value="")
         self.status_lbl = ctk.CTkLabel(self.topbar, textvariable=self.status_var)
-        self.status_lbl.grid(row=0, column=2, sticky="e")
+        self.status_lbl.grid(row=0, column=2, sticky="e", padx=(0,20))
 
         # IRD & JB labels
         self.loaded_ird_var = ctk.StringVar(value="")
@@ -533,6 +533,10 @@ class App(ctk.CTk):
         self.loaded_jb_var = ctk.StringVar(value="")
         self.loaded_jb_lbl = ctk.CTkLabel(self.main, textvariable=self.loaded_jb_var, font=("", 14, "bold"))
         self.loaded_jb_lbl.grid(row=2, column=0, sticky="w", pady=(0,6))
+
+        self.validation_result_var = ctk.StringVar(value="")
+        self.validation_result_lbl = ctk.CTkLabel(self.main, textvariable=self.validation_result_var, font=("", 12, "bold"))
+        self.validation_result_lbl.grid(row=2, column=0, sticky="e", padx=(0,20))
 
         self._divider(self.main, 3)
 
@@ -653,6 +657,7 @@ class App(ctk.CTk):
         # Clear labels
         self.loaded_ird_var.set("")
         self.loaded_jb_var.set("")
+        self.validation_result_var.set("")
         for var in self.info_vars:
             var.set("")
 
@@ -700,7 +705,7 @@ class App(ctk.CTk):
                 self.tree.tag_configure("ok", background="#2E8B57")
                 self.tree.tag_configure("missing", background="#9B1313")
                 self.tree.tag_configure("invalid", background="#C76E00")
-                self.tree.tag_configure("extra", background="#435274")
+                self.tree.tag_configure("extra", background="#6B6248")
                 self.tree.item(self._rows[idx], tags=(tag,))
 
                 if tag in ("missing", "invalid"):
@@ -782,13 +787,14 @@ class App(ctk.CTk):
         self._load_ird(path, source="user")
         if not self._compare_param_with_ird():
             return
-        log(f"User selected IRD file: {path}")
+        log(f"[USER] Selected IRD file: {path}")
 
     def pick_folder(self):
         root = filedialog.askdirectory(title="Select Game Folder (contains PS3_GAME, etc.)")
         if not root:
+            log("[USER] Cancelled game folder selection")
             return
-        log(f"User selected game folder: {root}")
+        log(f"[USER] Selected game folder: {root}")
         
         self.reset_app_state()
 
@@ -807,16 +813,17 @@ class App(ctk.CTk):
                 if not self._compare_param_with_ird():
                     return
             except Exception as e:
+                log(f"[ERROR] Failed to parse PARAM.SFO: {e}")
                 messagebox.showwarning("PARAM.SFO", f"Failed to parse PARAM.SFO: {e}")
 
         # auto ird fetch
         ird_path = auto_get_ird(self.param_sfo)
         if ird_path:
             self._load_ird(ird_path, source="auto")
-            log(f"Auto-fetched IRD for game: {ird_path}")
+            log(f"[INFO] Auto-fetched IRD at {ird_path}")
         else:
             self.status_var.set("IRD not found for this game.")
-            log("No IRD found online for the selected game")
+            log(f"[INFO] No IRD found online for {self.param_sfo.get('TITLE_ID', 'unknown')}")
 
     def clear_table(self):
         self._clear_table()
@@ -833,7 +840,6 @@ class App(ctk.CTk):
 
     def _parse_and_fill(self, path: str):
         try:
-            log(f"Loading IRD from: {path}")
             with open(path, "rb") as f:
                 content = f.read()
             content = uncompress_gzip(content)
@@ -843,9 +849,10 @@ class App(ctk.CTk):
                 raise ValueError("Not a valid IRD file")
 
             self._set_status_threadsafe("Parsing IRD header...")
-            log(f"Parsing IRD file: {path}")
+            log(f"[INFO] Parsing IRD file {path} ({len(content)} bytes)")
             ird = parse_ird_content(content)
             self.current_ird = ird
+            log(f"[INFO] Parsed IRD: Product={ird.product_code}, Title='{ird.title}', "f"AppVer={ird.app_version}, GameVer={ird.game_version}, UpdateVer={ird.update_version}")
 
             # Build rows
             self._set_status_threadsafe("Preparing rows...")
@@ -878,6 +885,7 @@ class App(ctk.CTk):
                                    if self._normalize_path_for_match(rel_path) not in ird_set]
 
                     for full_path in extra_files:
+                        log(f"[INFO] Extra file detected: {full_path}")
                         rel_path = os.path.relpath(full_path, self.current_jb).replace("\\", "/")
                         iid = self.tree.insert("", 0, values=[
                             rel_path,
@@ -914,6 +922,7 @@ class App(ctk.CTk):
             self.after(0, finish_and_maybe_validate)
 
         except Exception as ex:
+            log(f"[ERROR] Failed to load IRD: {e}")
             self._show_error_threadsafe(f"Failed to load IRD.{ex}")
 
     def _validate_jb_folder(self, root: str):
@@ -962,6 +971,8 @@ class App(ctk.CTk):
                 self._set_busy(False)
                 return
 
+            log(f"[VALIDATION] Starting validation of {len(ird.files)} files in {root}")
+
             while not self._result_q.empty():
                 try: self._result_q.get_nowait()
                 except queue.Empty: break
@@ -1008,10 +1019,11 @@ class App(ctk.CTk):
                         try:
                             md5_hex, size = self._md5_of_file(real_path)
                             md5_ok = (md5_hex.lower() == f.md5_checksum.hex().lower())
-                            status = "OK" if md5_ok else "Invalid (md5)"
+                            status = "OK" if md5_ok else "Invalid (MD5)"
                             status_class = "ok" if md5_ok else "invalid"
                             result = (idx, str(size), md5_hex, status, status_class)
                         except Exception as e:
+                            log(f"[ERROR] Read error: {e}")
                             result = (idx, "", f"<error: {e}>", "Read error", "invalid")
 
                     self._result_q.put(result)
@@ -1036,13 +1048,16 @@ class App(ctk.CTk):
                 missing = self._summary_counts["missing"]
                 mismatch = self._summary_counts["invalid"]
                 summary = f"Validation finished.\nOK: {ok}\nInvalid: {mismatch}\nMissing: {missing}"
+                self.validation_result_var.set(f"OK: {ok} | Invalid: {mismatch} | Missing: {missing}")
                 self._set_busy(False, "Validation complete.")
                 messagebox.showinfo("Game Validation", summary)
+                log(f"[VALIDATION] {summary}")
                 self._summary_counts = {"ok": 0, "missing": 0, "invalid": 0}
 
             self.after(150, finish_when_quiet)
 
         except Exception as ex:
+            log(f"[ERROR] Validation failed: {ex}")
             self._show_error_threadsafe(f"Validation failed. {ex}")
 
 if __name__ == "__main__":
