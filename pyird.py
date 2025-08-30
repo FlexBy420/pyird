@@ -519,7 +519,7 @@ class App(ctk.CTk):
         self.pick_folder_btn = ctk.CTkButton(self.topbar, text="Select Game Folder", command=self.pick_folder)
         self.pick_folder_btn.grid(row=0, column=1, padx=(8, 0), sticky="w")
         self.hdd_mode_var = ctk.BooleanVar(value=False)
-        self.hdd_mode_chk = ctk.CTkCheckBox(self.topbar, text="HDD Mode", variable=self.hdd_mode_var)
+        self.hdd_mode_chk = ctk.CTkCheckBox(self.topbar, text="HDD Mode (Slow)", variable=self.hdd_mode_var)
         self.hdd_mode_chk.grid(row=0, column=2, padx=(12, 0), sticky="w")
 
         self.status_var = ctk.StringVar(value="")
@@ -995,7 +995,7 @@ class App(ctk.CTk):
 
             file_queue = queue.Queue(maxsize=20)  # buffer between producer and workers
             if self.hdd_mode_var.get():
-                num_workers = 2
+                num_workers = 1
                 log("[VALIDATION] HDD Mode enabled -> sequential validation")
             else:
                 cpu_total = os.cpu_count() or 4
