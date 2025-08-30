@@ -518,10 +518,13 @@ class App(ctk.CTk):
         self.pick_btn.grid(row=0, column=0, sticky="w")
         self.pick_folder_btn = ctk.CTkButton(self.topbar, text="Select Game Folder", command=self.pick_folder)
         self.pick_folder_btn.grid(row=0, column=1, padx=(8, 0), sticky="w")
+        self.hdd_mode_var = ctk.BooleanVar(value=False)
+        self.hdd_mode_chk = ctk.CTkCheckBox(self.topbar, text="HDD Mode", variable=self.hdd_mode_var)
+        self.hdd_mode_chk.grid(row=0, column=2, padx=(12, 0), sticky="w")
 
         self.status_var = ctk.StringVar(value="")
         self.status_lbl = ctk.CTkLabel(self.topbar, textvariable=self.status_var)
-        self.status_lbl.grid(row=0, column=2, sticky="e", padx=(0,20))
+        self.status_lbl.grid(row=0, column=3, sticky="e", padx=(0,20))
 
         # IRD & JB labels
         self.loaded_ird_var = ctk.StringVar(value="")
@@ -616,6 +619,12 @@ class App(ctk.CTk):
             )
             pixel_width = max_width * 7 + 20  # 20px padding
             self.tree.column(col, width=pixel_width)
+
+    def _set_controls_enabled(self, enabled: bool):
+        state = "normal" if enabled else "disabled"
+        self.pick_btn.configure(state=state)
+        self.pick_folder_btn.configure(state=state)
+        self.hdd_mode_chk.configure(state=state)
 
     def _divider(self, parent, row_index):
         sep = ttk.Separator(parent, orient="horizontal")
@@ -925,6 +934,7 @@ class App(ctk.CTk):
 
     def _validate_jb_folder(self, root: str):
         self._set_busy(True, "Scanning JB folder...")
+        self._set_controls_enabled(False)
         t = threading.Thread(target=self._validate_worker, args=(root,), daemon=True)
         t.start()
 
@@ -984,8 +994,13 @@ class App(ctk.CTk):
             self.progress_lbl.configure(text=f"0 / {total_files} files")
 
             file_queue = queue.Queue(maxsize=20)  # buffer between producer and workers
-            cpu_total = os.cpu_count() or 4
-            num_workers = max(1, cpu_total // 2)
+            if self.hdd_mode_var.get():
+                num_workers = 2
+                log("[VALIDATION] HDD Mode enabled -> sequential validation")
+            else:
+                cpu_total = os.cpu_count() or 4
+                num_workers = max(1, cpu_total // 2)
+                log(f"[VALIDATION] Parallel validation with {num_workers} workers")
 
             # sequential file listing
             def producer():
@@ -1048,6 +1063,7 @@ class App(ctk.CTk):
                 summary = f"Validation finished.\nOK: {ok}\nInvalid: {mismatch}\nMissing: {missing}"
                 self.validation_result_var.set(f"OK: {ok} | Invalid: {mismatch} | Missing: {missing}")
                 self._set_busy(False, "Validation complete.")
+                self._set_controls_enabled(True)
                 messagebox.showinfo("Game Validation", summary)
                 log(f"[VALIDATION] {summary}")
                 self._summary_counts = {"ok": 0, "missing": 0, "invalid": 0}
@@ -1057,6 +1073,7 @@ class App(ctk.CTk):
         except Exception as ex:
             log(f"[ERROR] Validation failed: {ex}")
             self._show_error_threadsafe(f"Validation failed. {ex}")
+            self._set_controls_enabled(True)
 
 if __name__ == "__main__":
     App().mainloop()
