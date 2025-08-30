@@ -180,7 +180,6 @@ def fetch_remote_ird(title_id, app_ver, game_ver, fw_ver):
             except Exception as e:
                 log(f"[ERROR] Unexpected error while saving IRD: {e}")
                 return None
-
     # no exact match
     return None
 

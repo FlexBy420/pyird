@@ -71,7 +71,7 @@ jobs:
       - name: Build Executable (MacOS x64)
         if: ${{ matrix.os == 'macos-13' }}
         run: |
-          pyinstaller pyird.py --noconfirm --noconsole --onefile
+          pyinstaller pyird.py -w --noconfirm --onefile
           mkdir macos
           cp dist/pyird macos
           (cd macos/ && zip -r -X ../pyird_MacOS_x64.zip .)
@@ -79,7 +79,7 @@ jobs:
       - name: Build Executable (MacOS ARM)
         if: ${{ matrix.os == 'macos-14' }}
         run: |
-          pyinstaller pyird.py --noconfirm --noconsole --onefile
+          pyinstaller pyird.py -w --noconfirm --onefile
           mkdir macos-arm
           cp dist/pyird macos-arm
           (cd macos-arm/ && zip -r -X ../pyird_MacOS_arm64.zip .)
@@ -95,7 +95,7 @@ jobs:
       - name: Build Executable (Linux)
         if: ${{ matrix.os == 'ubuntu-latest' }}
         run: |
-          pyinstaller pyird.py --noconfirm --noconsole --onefile
+          pyinstaller pyird.py -w --noconfirm --onefile
           mkdir linux
           cp dist/pyird linux
           (cd linux/ && zip -r -X ../pyird_Linux.zip .)
