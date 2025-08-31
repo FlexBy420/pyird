@@ -495,7 +495,7 @@ class App(ctk.CTk):
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
 
-        self.title("PYIRD (Experimental)")
+        self.title("PYIRD")
         self.geometry("1300x740")
         self.minsize(1100, 680)
 
@@ -514,7 +514,7 @@ class App(ctk.CTk):
         self.topbar.grid_columnconfigure(1, weight=0)
         self.topbar.grid_columnconfigure(2, weight=1)
 
-        self.pick_btn = ctk.CTkButton(self.topbar, text="Select IRD File", command=self.pick_file, state="disabled")
+        self.pick_btn = ctk.CTkButton(self.topbar, text="Select IRD File", command=self.pick_file)
         self.pick_btn.grid(row=0, column=0, sticky="w")
         self.pick_folder_btn = ctk.CTkButton(self.topbar, text="Select Game Folder", command=self.pick_folder)
         self.pick_folder_btn.grid(row=0, column=1, padx=(8, 0), sticky="w")
