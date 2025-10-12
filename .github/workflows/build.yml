@@ -6,11 +6,13 @@ on:
   pull_request:
     paths:
       - pyird.py
+      - .github/workflows/build.yml 
   push:
     branches:
       - main
     paths:
       - pyird.py
+      - .github/workflows/build.yml 
 
 jobs:
   build_matrix:
@@ -90,7 +92,7 @@ jobs:
         run: |
           pyinstaller pyird.py --noconfirm --noconsole --icon="pyird.ico"
           mkdir windows
-          cp dist/pyird.exe windows
+          cp -r dist/pyird/* windows/
           Compress-Archive -Path "windows/*" -DestinationPath pyird_Windows.zip
 
       - name: Build Executable (Linux)
