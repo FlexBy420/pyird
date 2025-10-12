@@ -2,6 +2,7 @@ name: Build Workflow
 permissions:
   contents: write
 on:
+  workflow_dispatch:
   pull_request:
     paths:
       - pyird.py
