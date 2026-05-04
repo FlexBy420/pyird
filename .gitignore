@@ -2,3 +2,6 @@
 /dist
 /ird
 /logs
+/__pycache__
+*.pyc
+settings.json
