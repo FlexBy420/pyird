@@ -7,7 +7,7 @@ Windows
 ------------------------
 Just download pyird_Windows.zip from [Releases](https://github.com/FlexBy420/pyird/releases/latest), extract the archive, and run the .exe.
 
-Linux (WIP)
+Linux
 ------------------------
 Just download pyird_Linux.zip from [Releases](https://github.com/FlexBy420/pyird/releases/latest), extract the archive, and run the executable.
 
@@ -18,7 +18,7 @@ MacOS might say the app couldn't be verified, go to settings, privacy and securi
 
 ## Using PYIRD
 
-Once the program is open, click **"Select Game Folder"** and choose a folder containing `PS3_GAME`.
+Once the program is open, click **"Select Game Folder"** and choose a folder containing `PS3_GAME` or click **"Select Decrypted ISO"** and choose the ISO file.
 
 PYIRD will then attempt to **auto-load a matching IRD** file. If one is not found locally, it will fetch it from the online [PS3 IRD database](https://flexby420.github.io/playstation_3_ird_database/). You can also manually load an IRD by clicking **"Select IRD File"**.
 
@@ -33,7 +33,7 @@ Extra files in the folder will also be highlighted.
 
 ---
 
-## File Locations
+## File Locations (Can be changed in settings)
 - **IRD Files:** Stored in an `ird` folder in the same directory as the program. Filename must include the product code at the beginning in the format `BLES01750` or `BLES-01750` for local check to work.
 - **Logs:** Stored in `logs` folder in the same directory as the program.
 
