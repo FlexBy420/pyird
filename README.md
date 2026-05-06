@@ -1,5 +1,5 @@
 # PYIRD
-PYIRD is a program for validating PlayStation 3 JB folder game backups using IRD files. It supports automatic fetching of IRD files from online database and provides detailed file-level integrity verification against the original decrypted game structure.
+PYIRD is a program for validating PlayStation 3 JB folder and decrypted ISO game backups using IRD files. It supports automatic fetching of IRD files from online database and provides detailed file-level integrity verification against the original decrypted game structure.
 
 Installation
 ============
