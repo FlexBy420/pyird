@@ -527,7 +527,7 @@ class App(ctk.CTk):
 
     def pick_file(self):
         path = filedialog.askopenfilename(
-            title="Select IRD file", filetypes=[("IRD files", "*.ird")]
+            title="Select IRD file", filetypes=[("IRD files", "*.ird")], parent=self
         )
         if not path:
             return
@@ -540,7 +540,7 @@ class App(ctk.CTk):
 
     def pick_folder(self):
         root = filedialog.askdirectory(
-            title="Select Game Folder (contains PS3_GAME, etc.)"
+            title="Select Game Folder (contains PS3_GAME, etc.)", parent=self
         )
         if not root:
             log("[USER] Cancelled game folder selection")
@@ -585,6 +585,7 @@ class App(ctk.CTk):
         path = filedialog.askopenfilename(
             title="Select Decrypted PS3 ISO",
             filetypes=[("ISO files", "*.iso"), ("All files", "*.*")],
+            parent=self,
         )
         if not path:
             log("[USER] Cancelled ISO selection")
@@ -679,10 +680,11 @@ class App(ctk.CTk):
             ird_path = auto_get_ird(param_sfo, pick_fn=self._pick_ird_blocking)
         except Exception as e:
             log(f"[ERROR] Failed to fetch IRD: {e}")
+            err_msg = str(e)
             self.after(0, lambda: (
                 self._set_busy(False, ""),
                 self._set_controls_enabled(True),
-                messagebox.showwarning("IRD Auto", f"Failed to fetch IRD: {e}"),
+                messagebox.showwarning("IRD Auto", f"Failed to fetch IRD: {err_msg}"),
             ))
             return
 
