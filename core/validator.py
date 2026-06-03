@@ -21,10 +21,10 @@ def build_case_insensitive_file_map(root: str) -> dict[str, str]:
 
 def md5_of_file(
     path: str,
-    chunk_size: int = 4 * 1024 * 1024,
+    chunk_size: int = 16 * 1024 * 1024,
     mmap_threshold: int = 2048 * 1024 * 1024,
 ) -> tuple[str, int]:
-    h    = hashlib.md5()
+    h    = hashlib.md5(usedforsecurity=False)
     size = os.path.getsize(path)
     if size == 0:
         return h.hexdigest(), 0
@@ -59,9 +59,13 @@ def run_validation(
 ) -> None:
     total_files = len(ird.files)
     files_done  = 0
+    done_lock   = threading.Lock()
 
     file_map    = build_case_insensitive_file_map(root)
     num_workers = _resolve_num_workers(hdd_mode)
+
+    offset_to_iso = {e["first_extent"]: e for e in ird.iso_files}
+    expected_md5 = {f.offset: f.md5_checksum.hex() for f in ird.files}
 
     log(
         f"[VALIDATION] Starting validation of {total_files} files in {root} "
@@ -75,13 +79,11 @@ def run_validation(
 
     def producer():
         for idx, f in enumerate(ird.files):
-            iso_entry = next(
-                (e for e in ird.iso_files if e["first_extent"] == f.offset), None
-            )
+            iso_entry = offset_to_iso.get(f.offset)
             rel       = iso_entry["name"] if iso_entry else f"File {f.offset}"
             key       = normalize_path_for_match(rel)
             real_path = file_map.get(key)
-            file_queue.put((idx, f, rel, real_path))
+            file_queue.put((idx, f.offset, rel, real_path))
 
         for _ in range(num_workers):
             file_queue.put(None)   # sentinels
@@ -92,14 +94,14 @@ def run_validation(
             item = file_queue.get()
             if item is None:
                 break
-            idx, f, rel, real_path = item
+            idx, offset, rel, real_path = item
 
             if real_path is None:
                 result = (idx, None, None, "Missing", "missing")
             else:
                 try:
                     md5_hex, size = md5_of_file(real_path)
-                    ok     = md5_hex.lower() == f.md5_checksum.hex().lower()
+                    ok     = md5_hex == expected_md5[offset]
                     result = (
                         idx,
                         str(size),
@@ -107,18 +109,80 @@ def run_validation(
                         "OK" if ok else "Invalid (MD5)",
                         "ok" if ok else "invalid",
                     )
-                    log(
-                        f"[JB-VALIDATION] {rel}: {'OK' if ok else 'INVALID'} "
-                    )
+                    log(f"[JB-VALIDATION] {rel}: {'OK' if ok else 'INVALID'}")
                 except Exception as e:
                     log(f"[ERROR] Read error: {e}")
                     result = (idx, "", f"<error: {e}>", "Read error", "invalid")
 
             result_q.put(result)
-            files_done += 1
-            progress_callback(files_done, total_files)
+            with done_lock:
+                files_done += 1
+                current = files_done
+            progress_callback(current, total_files)
 
     threading.Thread(target=producer, daemon=True).start()
     with ThreadPoolExecutor(max_workers=num_workers) as executor:
         for _ in range(num_workers):
             executor.submit(worker)
+
+def run_iso_validation(
+    ird,
+    iso_path: str,
+    result_q: queue.Queue,
+    progress_callback,      # callable(done: int, total: int)
+    status_callback,        # callable(msg: str)
+) -> None:
+    BLOCK = 2048
+    CHUNK = 16 * 1024 * 1024
+
+    total_files   = len(ird.files)
+    offset_to_iso = {f["first_extent"]: f for f in ird.iso_files}
+
+    expected_md5 = {f.offset: f.md5_checksum.hex() for f in ird.files}
+
+    status_callback("Validating ISO files…")
+    progress_callback(0, total_files)
+
+    with open(iso_path, "rb") as fh:
+        try:
+            os.posix_fadvise(fh.fileno(), 0, 0, os.POSIX_FADV_SEQUENTIAL)
+        except (AttributeError, OSError):
+            pass
+
+        for idx, ird_file in enumerate(ird.files):
+            iso_entry = offset_to_iso.get(ird_file.offset)
+            rel       = iso_entry["name"] if iso_entry else f"File @sector {ird_file.offset}"
+            try:
+                h           = hashlib.md5(usedforsecurity=False)
+                actual_size = 0
+
+                for extent_sector, extent_size in (
+                    iso_entry["extents"] if iso_entry else [(ird_file.offset, 0)]
+                ):
+                    fh.seek(extent_sector * BLOCK)
+                    remaining = extent_size
+                    while remaining > 0:
+                        to_read = min(CHUNK, remaining)
+                        data    = fh.read(to_read)
+                        if not data:
+                            break
+                        h.update(data)
+                        actual_size += len(data)
+                        remaining   -= len(data)
+
+                md5_hex = h.hexdigest()
+                ok      = md5_hex == expected_md5[ird_file.offset]
+                result  = (
+                    idx,
+                    str(actual_size),
+                    md5_hex,
+                    "OK" if ok else "Invalid (MD5)",
+                    "ok" if ok else "invalid",
+                )
+                log(f"[ISO-VALID] {rel}: {'OK' if ok else 'INVALID'}")
+            except Exception as e:
+                log(f"[ERROR] ISO read error for {rel}: {e}")
+                result = (idx, "", f"<error: {e}>", "Read error", "invalid")
+
+            result_q.put(result)
+            progress_callback(idx + 1, total_files)

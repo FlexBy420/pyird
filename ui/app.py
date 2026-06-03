@@ -6,7 +6,7 @@ import customtkinter as ctk
 from tkinter import ttk, filedialog, messagebox, Listbox, SINGLE, END
 from utils.logger import log
 from utils.gzip import uncompress_gzip
-from utils.sfo import parse_param_sfo
+from utils.sfo import parse_param_sfo, read_param_sfo_from_iso
 from utils.ird_fetch import auto_get_ird
 from utils.size_units import human_size
 from core.ird import Ird, parse_ird_content
@@ -14,6 +14,7 @@ from core.validator import (
     normalize_path_for_match,
     build_case_insensitive_file_map,
     run_validation,
+    run_iso_validation,
 )
 
 class SettingsDialog(ctk.CTkToplevel):
@@ -608,52 +609,7 @@ class App(ctk.CTk):
 
     def _iso_preflight_worker(self, iso_path: str):
         try:
-            from core.iso import ISOHeader
-            param_sfo: dict = {}
-
-            BLOCK = 2048
-
-            with open(iso_path, "rb") as fh:
-                vd_data = fh.read(18 * BLOCK)  # sectors 0-17, VD is at 16+
-                iso_vd = ISOHeader(vd_data)
-
-                sfo_entry = None
-
-                fh.seek(0)
-                fast_data = fh.read(512 * BLOCK)
-                iso_fast = ISOHeader(fast_data)
-                sfo_entry = next(
-                    (f for f in iso_fast.files
-                     if f["name"].upper().endswith("PARAM.SFO")),
-                    None,
-                )
-
-                if not sfo_entry:
-                    fh.seek(0)
-                    full_data = fh.read(2048 * BLOCK)
-                    iso_full = ISOHeader(full_data)
-                    sfo_entry = next(
-                        (f for f in iso_full.files
-                         if f["name"].upper().endswith("PARAM.SFO")),
-                        None,
-                    )
-
-                if sfo_entry:
-                    extent, size = sfo_entry["extents"][0]
-                    fh.seek(extent * BLOCK)
-                    sfo_bytes = fh.read(size)
-                    import tempfile, os as _os
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".sfo") as tmp:
-                        tmp.write(sfo_bytes)
-                        tmp_path = tmp.name
-                    try:
-                        param_sfo = parse_param_sfo(tmp_path)
-                    finally:
-                        _os.unlink(tmp_path)
-                else:
-                    log("[WARNING] PARAM.SFO not found in ISO directory tree")
-
-            self.param_sfo = param_sfo
+            self.param_sfo = read_param_sfo_from_iso(iso_path)
 
             def on_ui():
                 self._compare_param_with_ird()
@@ -890,8 +846,6 @@ class App(ctk.CTk):
         ).start()
 
     def _validate_iso_worker(self, iso_path: str):
-        import hashlib
-
         try:
             ird = self.current_ird
             if not ird:
@@ -912,63 +866,22 @@ class App(ctk.CTk):
             self.after(0, lambda: self.progress_lbl.configure(
                 text=f"0 / {total_files} files"
             ))
-            self._set_status_threadsafe("Validating ISO files…")
 
-            BLOCK = 2048
-            CHUNK = 4 * 1024 * 1024  # 4 MB read chunks
+            def progress_cb(done: int, total: int):
+                self.after(0, lambda: self.progress_lbl.configure(
+                    text=f"{done} / {total} files"
+                ))
 
-            offset_to_iso = {f["first_extent"]: f for f in ird.iso_files}
+            def status_cb(msg: str):
+                self._set_status_threadsafe(msg)
 
-            with open(iso_path, "rb") as fh:
-                for idx, ird_file in enumerate(ird.files):
-                    iso_entry = offset_to_iso.get(ird_file.offset)
-                    if iso_entry:
-                        rel = iso_entry["name"]
-                        expected_size = iso_entry["size"]
-                    else:
-                        rel = f"File @sector {ird_file.offset}"
-                        expected_size = 0
-
-                    try:
-                        h = hashlib.md5()
-                        actual_size = 0
-
-                        for extent_sector, extent_size in (
-                            iso_entry["extents"] if iso_entry else [(ird_file.offset, 0)]
-                        ):
-                            fh.seek(extent_sector * BLOCK)
-                            remaining = extent_size
-                            while remaining > 0:
-                                to_read = min(CHUNK, remaining)
-                                data = fh.read(to_read)
-                                if not data:
-                                    break
-                                h.update(data)
-                                actual_size += len(data)
-                                remaining  -= len(data)
-
-                        md5_hex = h.hexdigest()
-                        ok = md5_hex.lower() == ird_file.md5_checksum.hex().lower()
-                        result = (
-                            idx,
-                            str(actual_size),
-                            md5_hex,
-                            "OK" if ok else "Invalid (MD5)",
-                            "ok" if ok else "invalid",
-                        )
-                        log(
-                            f"[ISO-VALID] {rel}: {'OK' if ok else 'INVALID'} "
-                        )
-                    except Exception as e:
-                        log(f"[ERROR] ISO read error for {rel}: {e}")
-                        result = (idx, "", f"<error: {e}>", "Read error", "invalid")
-
-                    self._result_q.put(result)
-                    self._files_done += 1
-                    done = self._files_done
-                    self.after(0, lambda d=done: self.progress_lbl.configure(
-                        text=f"{d} / {total_files} files"
-                    ))
+            run_iso_validation(
+                ird=ird,
+                iso_path=iso_path,
+                result_q=self._result_q,
+                progress_callback=progress_cb,
+                status_callback=status_cb,
+            )
 
             def finish_when_quiet():
                 if not self._result_q.empty():
