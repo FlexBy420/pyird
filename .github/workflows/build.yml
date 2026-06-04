@@ -21,17 +21,34 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            artifact_name: pyird_Windows.zip
+            artifact_name: pyird_Windows_x64.zip
             platform: windows
+            arch: x64
+
+          - os: windows-11-arm
+            artifact_name: pyird_Windows_arm64.zip
+            platform: windows
+            arch: arm64
+
           - os: macos-15-intel
             artifact_name: pyird_MacOS_x64.zip
-            platform: macos-x64
+            platform: macos
+            arch: x64
+
           - os: macos-latest
             artifact_name: pyird_MacOS_arm64.zip
-            platform: macos-arm
+            platform: macos
+            arch: arm64
+
           - os: ubuntu-latest
-            artifact_name: pyird_Linux.zip
+            artifact_name: pyird_Linux_x64.zip
             platform: linux
+            arch: x64
+
+          - os: ubuntu-24.04-arm
+            artifact_name: pyird_Linux_arm64.zip
+            platform: linux
+            arch: arm64
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -41,7 +58,7 @@ jobs:
       - name: Install Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
           cache: 'pip'
 
       - name: Install Requirements
@@ -55,8 +72,15 @@ jobs:
           pyinstaller main.py --noconfirm --windowed --name "pyird" --icon="pyird.ico"
           Compress-Archive -Path "dist/pyird/*" -DestinationPath ${{ matrix.artifact_name }}
 
-      - name: Build Executable (Unix)
-        if: matrix.platform != 'windows'
+      - name: Build Executable (macOS)
+        if: matrix.platform == 'macos'
+        run: |
+          pyinstaller main.py --noconfirm --windowed --name "pyird" \
+            --osx-bundle-identifier "com.pyird.app"
+          cd dist && zip -r ../${{ matrix.artifact_name }} pyird.app
+
+      - name: Build Executable (Linux)
+        if: matrix.platform == 'linux'
         run: |
           pyinstaller main.py --noconfirm --onefile --windowed --name "pyird"
           cd dist && zip -r ../${{ matrix.artifact_name }} pyird
