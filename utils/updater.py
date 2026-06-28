@@ -5,13 +5,11 @@ from utils.logger import log
 RELEASES_URL    = "https://api.github.com/repos/FlexBy420/pyird/releases/latest"
 RELEASES_PAGE   = "https://github.com/FlexBy420/pyird/releases/latest"
 
-
 def _parse_version(tag: str) -> int:
     try:
         return int(tag.lstrip("v"))
     except ValueError:
         return -1
-
 
 def check_for_update(
     current_version: str,

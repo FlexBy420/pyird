@@ -225,7 +225,7 @@ class App(ctk.CTk):
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
 
-        self.title("PYIRD")
+        self.title(f"PYIRD {APP_VERSION}")
         self.geometry("1300x740")
         self.minsize(1100, 680)
 
@@ -600,7 +600,7 @@ class App(ctk.CTk):
         self._update_tag = tag
         self._update_url = url
         self._update_btn.configure(
-            text=f"Update available: {tag}  ↓",
+            text=f"Update available: {tag}",
         )
         self._update_btn.grid(row=0, column=6, padx=(12, 0), sticky="w")
         log(f"[UPDATER] New version available: {tag}")
