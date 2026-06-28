@@ -17,3 +17,4 @@ os.makedirs(LOG_DIR, exist_ok=True)
 
 BASE_IRD_URL = "https://github.com/FlexBy420/playstation_3_ird_database/raw/main/"
 JSON_URL     = "https://flexby420.github.io/playstation_3_ird_database/all.json"
+APP_VERSION = "v0"

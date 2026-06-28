@@ -66,6 +66,24 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
+      - name: Stamp Version into config.py
+        shell: python
+        run: |
+          import re, subprocess, pathlib
+          count = subprocess.check_output(["git", "rev-list", "--count", "HEAD"]).decode().strip()
+          tag = f"v{count}"
+          path = pathlib.Path("config.py")
+          path.write_text(
+              re.sub(
+                  r'^APP_VERSION\s*=\s*"[^"]*"',
+                  f'APP_VERSION = "{tag}"',
+                  path.read_text(encoding="utf-8"),
+                  flags=re.MULTILINE,
+              ),
+              encoding="utf-8",
+          )
+          print(f"Stamped version: {tag}")
+
       - name: Build Executable (Windows)
         if: matrix.platform == 'windows'
         run: |
@@ -101,12 +119,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Get Next Version
+      - name: Get Version from Commit Count
         id: version
         run: |
-          latest_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "v1.0.0")
-          IFS='.' read -r major minor patch <<< "${latest_tag#v}"
-          new_tag="v$major.$minor.$((patch + 1))"
+          count=$(git rev-list --count HEAD)
+          new_tag="v$count"
           echo "new_tag=$new_tag" >> $GITHUB_OUTPUT
 
       - name: Download All Artifacts
