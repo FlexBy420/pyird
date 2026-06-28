@@ -4,7 +4,10 @@ import struct
 import threading
 import customtkinter as ctk
 from tkinter import ttk, filedialog, messagebox, Listbox, SINGLE, END
+import webbrowser
+from config import APP_VERSION
 from utils.logger import log
+from utils.updater import check_for_update, RELEASES_PAGE
 from utils.gzip import uncompress_gzip
 from utils.sfo import parse_param_sfo, read_param_sfo_from_iso
 from utils.ird_fetch import auto_get_ird
@@ -253,16 +256,32 @@ class App(ctk.CTk):
         self.status_lbl = ctk.CTkLabel(self.topbar, textvariable=self.status_var)
         self.status_lbl.grid(row=0, column=5, sticky="e", padx=(0, 20))
 
-        # Path labels
-        self.loaded_ird_var = ctk.StringVar(value="")
-        ctk.CTkLabel(
-            self.main, textvariable=self.loaded_ird_var, font=("", 14, "bold")
-        ).grid(row=1, column=0, sticky="w")
+        self._update_btn = ctk.CTkButton(
+            self.topbar, text="", width=0,
+            fg_color="#1a6b2e", hover_color="#22883a", text_color="white",
+            command=self._open_release_page,
+        )
+        # Hidden until an update is found
+        self._update_tag  = ""
+        self._update_url  = RELEASES_PAGE
 
-        self.loaded_jb_var = ctk.StringVar(value="")
-        ctk.CTkLabel(
+        # Path labels
+        self.loaded_ird_var   = ctk.StringVar(value="")
+        self._loaded_ird_full = ""
+        self._loaded_ird_lbl  = ctk.CTkLabel(
+            self.main, textvariable=self.loaded_ird_var, font=("", 14, "bold")
+        )
+        self._loaded_ird_lbl.grid(row=1, column=0, sticky="w")
+
+        self.loaded_jb_var   = ctk.StringVar(value="")
+        self._loaded_jb_full = ""
+        self._loaded_jb_lbl  = ctk.CTkLabel(
             self.main, textvariable=self.loaded_jb_var, font=("", 14, "bold")
-        ).grid(row=2, column=0, sticky="w", pady=(0, 6))
+        )
+        self._loaded_jb_lbl.grid(row=2, column=0, sticky="w", pady=(0, 6))
+
+        self._bind_tooltip(self._loaded_ird_lbl, lambda: self._loaded_ird_full)
+        self._bind_tooltip(self._loaded_jb_lbl,  lambda: self._loaded_jb_full)
 
         self.validation_result_var = ctk.StringVar(value="")
         ctk.CTkLabel(
@@ -289,10 +308,16 @@ class App(ctk.CTk):
         for c in range(7):
             self.info_frame.grid_columnconfigure(c, weight=1)
 
-        headers = [
-            "Product Code", "Title", "App Version",
-            "Game Version", "Update Version", "Files", "Total Size",
+        self._info_meta = [
+            ("Product Code", "TITLE_ID",         "Product code printed on the disc."),
+            ("Title",        "TITLE",            "Game title."),
+            ("App Version",  "APP_VER",          "Game version as seen in XMB (APP_VER)."),
+            ("Game Version", "VERSION",          "Disc print version (VERSION) of this specific\ngame version (APP_VER)."),
+            ("Update Ver.",  "PS3_SYSTEM_VER",   "Minimum firmware version required (PS3_SYSTEM_VER), and provided on the disc for offline update."),
+            ("Files",        None,               "Number of files on the disc (from IRD)."),
+            ("Total Size",   None,               "Game size on disc (from IRD)."),
         ]
+        headers      = [m[0] for m in self._info_meta]
         self.info_vars   = [ctk.StringVar(value="") for _ in headers]
         self.info_labels = []
 
@@ -304,6 +329,7 @@ class App(ctk.CTk):
             lbl = ctk.CTkLabel(self.info_frame, textvariable=var)
             lbl.grid(row=1, column=i, sticky="ew", padx=4, pady=(0, 6))
             self.info_labels.append(lbl)
+            self._bind_info_tooltip(lbl, i)
 
         self._divider(self.main, 6)
 
@@ -313,9 +339,9 @@ class App(ctk.CTk):
         self.table_container.grid_columnconfigure(0, weight=1)
         self.table_container.grid_rowconfigure(0, weight=1)
 
-        self.table_headers = (
-            "Filename", "Size (bytes)", "MD5 (IRD)", "Size (JB)", "MD5 (JB)", "Result"
-        )
+        self.table_headers = ("Filename", "Size", "MD5", "Result")
+        self._row_details:   dict[str, str] = {}
+        self._row_raw_size: dict[str, int] = {}
         self.tree = ttk.Treeview(
             self.table_container, columns=self.table_headers, show="headings"
         )
@@ -327,9 +353,15 @@ class App(ctk.CTk):
         scrollbar.grid(row=0, column=1, sticky="ns")
         self.tree.configure(yscrollcommand=scrollbar.set)
 
+        col_cfg = {
+            "Filename": dict(anchor="w", width=380, stretch=True,  minwidth=120),
+            "Size":     dict(anchor="e", width=110, stretch=False, minwidth=80),
+            "MD5":      dict(anchor="w", width=260, stretch=False, minwidth=220),
+            "Result":   dict(anchor="w", width=120, stretch=False, minwidth=80),
+        }
         for col in self.table_headers:
             self.tree.heading(col, text=col)
-            self.tree.column(col, anchor="w", width=150, stretch=True)
+            self.tree.column(col, **col_cfg.get(col, dict(anchor="w", width=150, stretch=False)))
 
         style = ttk.Style()
         style.theme_use("clam")
@@ -348,10 +380,16 @@ class App(ctk.CTk):
         self._rows:       list[str] = []
         self._extra_rows: list[str] = []
 
+        # Tooltip for invalid/missing rows
+        self._tree_tip: object = None
+        self.tree.bind("<Motion>",   self._on_tree_motion)
+        self.tree.bind("<Leave>",    self._on_tree_leave)
+
         self.current_ird  = None
         self.current_jb:  str | None = None
         self.current_iso: str | None = None
         self.param_sfo:   dict | None = None
+        self._ird_info:   dict       = {}
 
         self._result_q       = queue.Queue()
         self._summary_counts = {"ok": 0, "missing": 0, "invalid": 0}
@@ -362,6 +400,195 @@ class App(ctk.CTk):
 
         self.after(50, self._drain_results)
         self.after(50, self._drain_ui_requests)
+        self.after(1000, self._start_update_check)
+
+    @staticmethod
+    def _truncate_path(label: str, path: str, max_chars: int = 80) -> str:
+        full = f"{label}: {path}"
+        if len(full) <= max_chars:
+            return full
+        parts = path.replace("\\", "/").split("/")
+        tail  = parts[-1]
+        for part in reversed(parts[:-1]):
+            candidate = f"{part}/{tail}"
+            if len(f"{label}: …/{candidate}") <= max_chars:
+                tail = candidate
+            else:
+                break
+        return f"{label}: …/{tail}"
+
+    def _set_ird_label(self, label: str, path: str) -> None:
+        self._loaded_ird_full = f"{label}: {path}"
+        self.loaded_ird_var.set(self._truncate_path(label, path))
+
+    def _set_jb_label(self, label: str, path: str) -> None:
+        self._loaded_jb_full = f"{label}: {path}"
+        self.loaded_jb_var.set(self._truncate_path(label, path))
+
+    @staticmethod
+    def _bind_tooltip(widget, text_fn):
+        tip: list = [None]
+
+        def enter(_e):
+            msg = text_fn()
+            if not msg:
+                return
+            x = widget.winfo_rootx() + 4
+            y = widget.winfo_rooty() + widget.winfo_height() + 2
+            tw = ctk.CTkToplevel(widget)
+            tw.wm_overrideredirect(True)
+            tw.wm_geometry(f"+{x}+{y}")
+            ctk.CTkLabel(
+                tw, text=msg, font=("", 11),
+                fg_color="#2b2b2b", corner_radius=4,
+                padx=8, pady=4,
+            ).pack()
+            tip[0] = tw
+
+        def leave(_e):
+            if tip[0]:
+                try:
+                    tip[0].destroy()
+                except Exception:
+                    pass
+                tip[0] = None
+
+        widget.bind("<Enter>", enter, add="+")
+        widget.bind("<Leave>", leave, add="+")
+
+    def _on_tree_motion(self, event):
+        iid = self.tree.identify_row(event.y)
+        if not iid:
+            self._hide_tree_tip()
+            return
+
+        col     = self.tree.identify_column(event.x)
+        headers = self.tree["columns"]
+        col_idx = int(col.lstrip("#")) - 1 if col.startswith("#") else -1
+        col_name = headers[col_idx] if 0 <= col_idx < len(headers) else ""
+
+        if col_name == "Size":
+            raw = self._row_raw_size.get(iid, 0)
+            tip_text = f"{raw:,} bytes" if raw else ""
+        else:
+            tip_text = self._row_details.get(iid, "")
+
+        if not tip_text:
+            self._hide_tree_tip()
+            return
+
+        tip_key = (iid, col_name)
+        if self._tree_tip and getattr(self._tree_tip, "_for_key", None) == tip_key:
+            return
+        self._hide_tree_tip()
+        x = self.tree.winfo_rootx() + event.x + 16
+        y = self.tree.winfo_rooty() + event.y + 4
+        tw = ctk.CTkToplevel(self)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+        tw._for_key = tip_key
+        ctk.CTkLabel(
+            tw, text=tip_text, font=("Consolas", 11),
+            fg_color="#2b2b2b", corner_radius=4,
+            justify="left", padx=10, pady=6,
+        ).pack()
+        self._tree_tip = tw
+
+    def _on_tree_leave(self, _event):
+        self._hide_tree_tip()
+
+    def _hide_tree_tip(self):
+        if self._tree_tip:
+            try:
+                self._tree_tip.destroy()
+            except Exception:
+                pass
+            self._tree_tip = None
+
+    def _bind_info_tooltip(self, widget, col_idx: int):
+        tip: list = [None]
+
+        def enter(_e):
+            _header, sfo_key, description = self._info_meta[col_idx]
+            ird_info = self._ird_info
+
+            lines = [description, ""]
+
+            if col_idx == 5: # Files
+                ird_count = ird_info.get("file_count")
+                sfo_count = None
+                if ird_count is not None:
+                    lines.append(f"IRD: {ird_count} files")
+                actual = None
+                if self.current_jb:
+                    try:
+                        actual = sum(len(fs) for _, _, fs in os.walk(self.current_jb))
+                        lines.append(f"Disk : {actual} files")
+                    except Exception:
+                        pass
+                elif self.current_iso and ird_info:
+                    lines.append("Disk: (from ISO - not separately counted)")
+
+            elif col_idx == 6: # Total Size
+                raw = ird_info.get("disc_size", 0)
+                if raw:
+                    lines.append(f"IRD: {human_size(raw)}  ({raw:,} B)")
+                else:
+                    lines.append("IRD: -")
+
+            elif sfo_key:
+                ird_val = list(ird_info.values())[col_idx] if ird_info else None
+                sfo_val = (self.param_sfo or {}).get(sfo_key, "").strip() or "-"
+                ird_str = (str(ird_val).strip() if ird_val else None) or "-"
+                lines.append(f"IRD: {ird_str}")
+                lines.append(f"SFO: {sfo_val}")
+
+            tip_text = "\n".join(lines).strip()
+            if not tip_text:
+                return
+
+            x = widget.winfo_rootx()
+            y = widget.winfo_rooty() + widget.winfo_height() + 2
+            tw = ctk.CTkToplevel(widget)
+            tw.wm_overrideredirect(True)
+            tw.wm_geometry(f"+{x}+{y}")
+            ctk.CTkLabel(
+                tw, text=tip_text, font=("Consolas", 11),
+                fg_color="#2b2b2b", corner_radius=4,
+                justify="left", padx=10, pady=6,
+            ).pack()
+            tip[0] = tw
+
+        def leave(_e):
+            if tip[0]:
+                try:
+                    tip[0].destroy()
+                except Exception:
+                    pass
+                tip[0] = None
+
+        widget.bind("<Enter>", enter, add="+")
+        widget.bind("<Leave>", leave, add="+")
+
+    def _start_update_check(self):
+        check_for_update(
+            current_version=APP_VERSION,
+            on_update_available=lambda tag, url: self.after(
+                0, lambda: self._show_update_badge(tag, url)
+            ),
+        )
+
+    def _show_update_badge(self, tag: str, url: str):
+        self._update_tag = tag
+        self._update_url = url
+        self._update_btn.configure(
+            text=f"Update available: {tag}  ↓",
+        )
+        self._update_btn.grid(row=0, column=6, padx=(12, 0), sticky="w")
+        log(f"[UPDATER] New version available: {tag}")
+
+    def _open_release_page(self):
+        webbrowser.open(self._update_url)
 
     def open_settings(self):
         SettingsDialog(self)
@@ -383,14 +610,18 @@ class App(ctk.CTk):
     def _run_on_ui(self, fn):
         self.after(0, fn)
 
+    _FIXED_WIDTH_COLS = {"Size", "MD5", "Result"}
+
     def autosize_tree_columns(self):
         self.update_idletasks()
         for col in self.tree["columns"]:
-            max_width = max(
+            if col in self._FIXED_WIDTH_COLS:
+                continue
+            char_widths = (
                 [len(self.tree.heading(col, option="text"))]
                 + [len(str(self.tree.set(iid, col))) for iid in self.tree.get_children()]
             )
-            self.tree.column(col, width=max_width * 7 + 20)
+            self.tree.column(col, width=max(char_widths) * 7 + 20)
 
     def _set_controls_enabled(self, enabled: bool):
         state = "normal" if enabled else "disabled"
@@ -427,14 +658,19 @@ class App(ctk.CTk):
             self.tree.delete(iid)
         self._rows.clear()
         self._extra_rows.clear()
+        self._row_details.clear()
+        self._row_raw_size.clear()
 
-    def _add_table_row(self, values: list[str], tag: str = ""):
+    def _add_table_row(self, values: list[str], tag: str = "", raw_size: int = 0):
         if tag in ("missing", "invalid"):
             iid = self.tree.insert("", 0, values=values, tags=(tag,))
             self._rows.insert(0, iid)
         else:
             iid = self.tree.insert("", "end", values=values, tags=(tag,))
             self._rows.append(iid)
+        self._row_details[iid]  = ""
+        self._row_raw_size[iid] = raw_size
+        return iid
 
     def _drain_results(self, max_per_tick: int = 1200):
         if self._result_q.qsize() > 5000:
@@ -443,18 +679,39 @@ class App(ctk.CTk):
         while processed < max_per_tick and not self._result_q.empty():
             idx, jb_size, jb_md5, result, tag = self._result_q.get()
             if 0 <= idx < len(self._rows):
-                vals     = list(self.tree.item(self._rows[idx], "values"))
-                vals[3]  = jb_size or ""
-                vals[4]  = jb_md5  or ""
-                vals[5]  = result  or ""
-                self.tree.item(self._rows[idx], values=vals)
+                iid  = self._rows[idx]
+                vals = list(self.tree.item(iid, "values"))
+                vals[3] = result or ""
+                if tag == "invalid":
+                    ird_md5  = vals[2]
+                    raw_ird  = self._row_raw_size.get(iid, 0)
+                    raw_jb   = int(jb_size) if jb_size and jb_size.isdigit() else None
+                    def _fmt(raw):
+                        if raw is None: return chr(8212)
+                        return f"{human_size(raw)}  ({raw:,} B)"
+                    detail = (
+                        f"{'Size':8}  IRD  {_fmt(raw_ird)}\n"
+                        f"{'':8}  File {_fmt(raw_jb)}\n"
+                        f"\n"
+                        f"{'MD5':8}  IRD  {ird_md5}\n"
+                        f"{'':8}  File {jb_md5 or chr(8212)}"
+                    )
+                    self._row_details[iid] = detail
+                elif tag == "missing":
+                    self._row_details[iid] = "File not found on disk"
+                else:
+                    raw_jb = int(jb_size) if jb_size and jb_size.isdigit() else None
+                    if raw_jb is not None:
+                        self._row_raw_size[iid] = raw_jb
+                    self._row_details[iid] = ""
+                self.tree.item(iid, values=vals)
                 self.tree.tag_configure("ok",      background="#2E8B57")
                 self.tree.tag_configure("missing", background="#9B1313")
                 self.tree.tag_configure("invalid", background="#C76E00")
                 self.tree.tag_configure("extra",   background="#6B6248")
-                self.tree.item(self._rows[idx], tags=(tag,))
+                self.tree.item(iid, tags=(tag,))
                 if tag in ("missing", "invalid"):
-                    self.tree.move(self._rows[idx], "", 0)
+                    self.tree.move(iid, "", 0)
             if tag in self._summary_counts:
                 self._summary_counts[tag] += 1
             processed += 1
@@ -466,8 +723,8 @@ class App(ctk.CTk):
         self.current_iso = None
         self.param_sfo   = None
 
-        self.loaded_ird_var.set("")
-        self.loaded_jb_var.set("")
+        self._set_ird_label("", "")
+        self._set_jb_label("", "")
         self.validation_result_var.set("")
         for var in self.info_vars:
             var.set("")
@@ -519,7 +776,7 @@ class App(ctk.CTk):
                 "Please choose the correct IRD.\n\n" + "\n".join(mismatches),
             )
             self.current_ird = None
-            self.loaded_ird_var.set("")
+            self._set_ird_label("", "")
             self.clear_table()
             for var in self.info_vars:
                 var.set("")
@@ -532,7 +789,7 @@ class App(ctk.CTk):
         )
         if not path:
             return
-        self.loaded_ird_var.set(f"Loaded IRD: {os.path.basename(path)}")
+        self._set_ird_label("Loaded IRD", os.path.basename(path))
         self.status_var.set("")
         self._load_ird(path, source="user")
         if not self._compare_param_with_ird():
@@ -557,7 +814,7 @@ class App(ctk.CTk):
             return
 
         self.current_jb = root
-        self.loaded_jb_var.set(f"Loaded Game Folder: {root}")
+        self._set_jb_label("Loaded Game Folder", root)
         self.pick_btn.configure(state="normal")
 
         sfo_path = os.path.join(root, "PS3_GAME", "PARAM.SFO")
@@ -595,7 +852,7 @@ class App(ctk.CTk):
 
         self.reset_app_state()
         self.current_iso = path
-        self.loaded_jb_var.set(f"Loaded ISO: {path}")
+        self._set_jb_label("Loaded ISO", path)
         self.pick_btn.configure(state="normal")
 
         # Try to read PARAM.SFO from inside the ISO
@@ -653,6 +910,7 @@ class App(ctk.CTk):
                 self.status_var.set("IRD not found for this game."),
             ))
             log(f"[INFO] No IRD found for {param_sfo.get('TITLE_ID', 'unknown')}")
+            log(f"[SFO] SFO contents: {param_sfo}")
 
     def _on_ird_fetched(self, ird_path: str):
         self._set_busy(False, "")
@@ -674,7 +932,7 @@ class App(ctk.CTk):
 
     def _load_ird(self, path: str, source: str = "user"):
         label = "Auto-Fetched IRD" if source == "auto" else "Loaded IRD"
-        self.loaded_ird_var.set(f"{label}: {os.path.basename(path)}")
+        self._set_ird_label(label, os.path.basename(path))
         self._set_busy(True, "Reading file...")
         threading.Thread(target=self._parse_and_fill, args=(path,), daemon=True).start()
 
@@ -712,7 +970,8 @@ class App(ctk.CTk):
                         name = f"File {ird_file.offset}"
                         size = ""
                     self._add_table_row(
-                        [name, str(size), ird_file.md5_checksum.hex(), "", "", ""]
+                        [name, human_size(size) if size else "", ird_file.md5_checksum.hex(), ""],
+                        raw_size=int(size) if size else 0,
                     )
 
                 # Extra files not mentioned in the IRD
@@ -733,24 +992,36 @@ class App(ctk.CTk):
                         ).replace("\\", "/")
                         iid = self.tree.insert(
                             "", 0,
-                            values=[rel_path, "", "", "", "", "Extra File"],
+                            values=[rel_path, "", "", "Extra File"],
                             tags=("extra",),
                         )
                         self._extra_rows.append(iid)
 
                 # Update info panel
+                def _clean(s: str) -> str:
+                    v = (s or "").strip()
+                    return v if v else "-"
+
                 vals = [
-                    ird.product_code,
-                    ird.title,
-                    ird.app_version,
-                    ird.game_version,
-                    ird.update_version,
+                    _clean(ird.product_code),
+                    _clean(ird.title),
+                    _clean(ird.app_version),
+                    _clean(ird.game_version),
+                    _clean(ird.update_version),
                     str(ird.file_count),
-                    f"{ird.disc_size} ({human_size(ird.disc_size)})"
-                    if ird.disc_size else "",
+                    human_size(ird.disc_size) if ird.disc_size else "-",
                 ]
                 for var, v in zip(self.info_vars, vals):
                     var.set(v)
+                self._ird_info = {
+                    "product_code":  _clean(ird.product_code),
+                    "title":         _clean(ird.title),
+                    "app_version":   _clean(ird.app_version),
+                    "game_version":  _clean(ird.game_version),
+                    "update_version":_clean(ird.update_version),
+                    "file_count":    ird.file_count,
+                    "disc_size":     ird.disc_size,
+                }
 
             self.after(0, apply_rows)
             self.after(50, self.autosize_tree_columns)

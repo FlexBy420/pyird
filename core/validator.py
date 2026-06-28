@@ -106,7 +106,7 @@ def run_validation(
                         idx,
                         str(size),
                         md5_hex,
-                        "OK" if ok else "Invalid (MD5)",
+                        "OK" if ok else "Invalid",
                         "ok" if ok else "invalid",
                     )
                     log(f"[JB-VALIDATION] {rel}: {'OK' if ok else 'INVALID'}")
@@ -176,7 +176,7 @@ def run_iso_validation(
                     idx,
                     str(actual_size),
                     md5_hex,
-                    "OK" if ok else "Invalid (MD5)",
+                    "OK" if ok else "Invalid",
                     "ok" if ok else "invalid",
                 )
                 log(f"[ISO-VALID] {rel}: {'OK' if ok else 'INVALID'}")
