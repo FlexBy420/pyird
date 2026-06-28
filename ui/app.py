@@ -2,6 +2,7 @@ import os
 import queue
 import struct
 import threading
+import tkinter as tk
 import customtkinter as ctk
 from tkinter import ttk, filedialog, messagebox, Listbox, SINGLE, END
 import webbrowser
@@ -331,7 +332,7 @@ class App(ctk.CTk):
             ("Title",        "TITLE",            "Game title."),
             ("App Version",  "APP_VER",          "Game version as seen in XMB (APP_VER)."),
             ("Game Version", "VERSION",          "Disc print version (VERSION) of this specific\ngame version (APP_VER)."),
-            ("Update Ver.",  "PS3_SYSTEM_VER",   "Minimum firmware version required (PS3_SYSTEM_VER), and provided on the disc for offline update."),
+            ("Update Version",  "PS3_SYSTEM_VER",   "Minimum firmware version required (PS3_SYSTEM_VER), and provided on the disc for offline update."),
             ("Files",        None,               "Number of files on the disc (from IRD)."),
             ("Total Size",   None,               "Game size on disc (from IRD)."),
         ]
@@ -444,26 +445,17 @@ class App(ctk.CTk):
         self.loaded_jb_var.set(self._truncate_path(label, path))
 
     @staticmethod
-    def _bind_tooltip(widget, text_fn):
+    def _make_tooltip(widget, text_fn, *, offset_x=4, offset_y=2, font=("", 10), anchor="below"):
         tip: list = [None]
+        after_id: list = [None]
 
-        def enter(_e):
-            msg = text_fn()
-            if not msg:
-                return
-            x = widget.winfo_rootx() + 4
-            y = widget.winfo_rooty() + widget.winfo_height() + 2
-            tw = ctk.CTkToplevel(widget)
-            tw.wm_overrideredirect(True)
-            tw.wm_geometry(f"+{x}+{y}")
-            ctk.CTkLabel(
-                tw, text=msg, font=("", 11),
-                fg_color="#2b2b2b", corner_radius=4,
-                padx=8, pady=4,
-            ).pack()
-            tip[0] = tw
-
-        def leave(_e):
+        def _destroy():
+            if after_id[0]:
+                try:
+                    widget.after_cancel(after_id[0])
+                except Exception:
+                    pass
+                after_id[0] = None
             if tip[0]:
                 try:
                     tip[0].destroy()
@@ -471,18 +463,57 @@ class App(ctk.CTk):
                     pass
                 tip[0] = None
 
-        widget.bind("<Enter>", enter, add="+")
-        widget.bind("<Leave>", leave, add="+")
+        def _show():
+            after_id[0] = None
+            msg = text_fn()
+            if not msg or tip[0]:
+                return
+            try:
+                tw = tk.Toplevel(widget)
+                tw.overrideredirect(True)
+                tw.withdraw()
+                tw.attributes("-topmost", True)
+                tw.attributes("-alpha", 0.95)
+                tk.Label(
+                    tw, text=msg, font=font,
+                    background="#2b2b2b", foreground="white",
+                    relief="flat", padx=6, pady=3,
+                    justify="left",
+                ).pack()
+                tw.update_idletasks()
+                x = widget.winfo_rootx() + offset_x
+                y = widget.winfo_rooty() + widget.winfo_height() + offset_y
+                tw.wm_geometry(f"+{x}+{y}")
+                tw.deiconify()
+                tip[0] = tw
+            except Exception:
+                pass
 
+        def enter(_e):
+            if after_id[0]:
+                return
+            after_id[0] = widget.after(400, _show)
+
+        def leave(_e):
+            _destroy()
+
+        widget.bind("<Enter>",   enter,             add="+")
+        widget.bind("<Leave>",   leave,             add="+")
+        widget.bind("<Destroy>", lambda _e: _destroy(), add="+")
+        return _destroy
+
+    @staticmethod
+    def _bind_tooltip(widget, text_fn):
+        App._make_tooltip(widget, text_fn)
     def _on_tree_motion(self, event):
         iid = self.tree.identify_row(event.y)
         if not iid:
             self._hide_tree_tip()
             return
 
-        col     = self.tree.identify_column(event.x)
-        headers = self.tree["columns"]
-        col_idx = int(col.lstrip("#")) - 1 if col.startswith("#") else -1
+        col      = self.tree.identify_column(event.x)
+        headers  = self.tree["columns"]
+        col_idx  = int(col.lstrip("#")) - 1 if col.startswith("#") else -1
         col_name = headers[col_idx] if 0 <= col_idx < len(headers) else ""
 
         if col_name == "Size":
@@ -499,18 +530,27 @@ class App(ctk.CTk):
         if self._tree_tip and getattr(self._tree_tip, "_for_key", None) == tip_key:
             return
         self._hide_tree_tip()
+
         x = self.tree.winfo_rootx() + event.x + 16
         y = self.tree.winfo_rooty() + event.y + 4
-        tw = ctk.CTkToplevel(self)
-        tw.wm_overrideredirect(True)
-        tw.wm_geometry(f"+{x}+{y}")
-        tw._for_key = tip_key
-        ctk.CTkLabel(
-            tw, text=tip_text, font=("Consolas", 11),
-            fg_color="#2b2b2b", corner_radius=4,
-            justify="left", padx=10, pady=6,
-        ).pack()
-        self._tree_tip = tw
+        try:
+            tw = tk.Toplevel(self)
+            tw.overrideredirect(True)
+            tw.withdraw()
+            tw.attributes("-topmost", True)
+            tw.attributes("-alpha", 0.95)
+            tk.Label(
+                tw, text=tip_text, font=("Consolas", 10),
+                background="#2b2b2b", foreground="white",
+                relief="flat", padx=6, pady=3, justify="left",
+            ).pack()
+            tw.update_idletasks()
+            tw.wm_geometry(f"+{x}+{y}")
+            tw.deiconify()
+            tw._for_key = tip_key
+            self._tree_tip = tw
+        except Exception:
+            pass
 
     def _on_tree_leave(self, _event):
         self._hide_tree_tip()
@@ -524,20 +564,15 @@ class App(ctk.CTk):
             self._tree_tip = None
 
     def _bind_info_tooltip(self, widget, col_idx: int):
-        tip: list = [None]
-
-        def enter(_e):
+        def text_fn():
             _header, sfo_key, description = self._info_meta[col_idx]
             ird_info = self._ird_info
-
             lines = [description, ""]
 
-            if col_idx == 5: # Files
+            if col_idx == 5:  # Files
                 ird_count = ird_info.get("file_count")
-                sfo_count = None
                 if ird_count is not None:
                     lines.append(f"IRD: {ird_count} files")
-                actual = None
                 if self.current_jb:
                     try:
                         actual = sum(len(fs) for _, _, fs in os.walk(self.current_jb))
@@ -546,14 +581,9 @@ class App(ctk.CTk):
                         pass
                 elif self.current_iso and ird_info:
                     lines.append("Disk: (from ISO - not separately counted)")
-
-            elif col_idx == 6: # Total Size
+            elif col_idx == 6:  # Total Size
                 raw = ird_info.get("disc_size", 0)
-                if raw:
-                    lines.append(f"IRD: {human_size(raw)}  ({raw:,} B)")
-                else:
-                    lines.append("IRD: -")
-
+                lines.append(f"IRD: {human_size(raw)}  ({raw:,} B)" if raw else "IRD: -")
             elif sfo_key:
                 ird_val = list(ird_info.values())[col_idx] if ird_info else None
                 sfo_val = (self.param_sfo or {}).get(sfo_key, "").strip() or "-"
@@ -561,33 +591,9 @@ class App(ctk.CTk):
                 lines.append(f"IRD: {ird_str}")
                 lines.append(f"SFO: {sfo_val}")
 
-            tip_text = "\n".join(lines).strip()
-            if not tip_text:
-                return
+            return "\n".join(lines).strip()
 
-            x = widget.winfo_rootx()
-            y = widget.winfo_rooty() + widget.winfo_height() + 2
-            tw = ctk.CTkToplevel(widget)
-            tw.wm_overrideredirect(True)
-            tw.wm_geometry(f"+{x}+{y}")
-            ctk.CTkLabel(
-                tw, text=tip_text, font=("Consolas", 11),
-                fg_color="#2b2b2b", corner_radius=4,
-                justify="left", padx=10, pady=6,
-            ).pack()
-            tip[0] = tw
-
-        def leave(_e):
-            if tip[0]:
-                try:
-                    tip[0].destroy()
-                except Exception:
-                    pass
-                tip[0] = None
-
-        widget.bind("<Enter>", enter, add="+")
-        widget.bind("<Leave>", leave, add="+")
-
+        App._make_tooltip(widget, text_fn, font=("Consolas", 10))
     def _start_update_check(self):
         check_for_update(
             current_version=APP_VERSION,
