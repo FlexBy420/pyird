@@ -606,7 +606,35 @@ class App(ctk.CTk):
         log(f"[UPDATER] New version available: {tag}")
 
     def _open_release_page(self):
-        webbrowser.open(self._update_url)
+        url = self._update_url
+        opened = False
+
+        try:
+            opened = webbrowser.open(url)
+        except Exception:
+            pass
+
+        if not opened:
+            try:
+                import subprocess
+                subprocess.Popen(["xdg-open", url],
+                                 stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL)
+                opened = True
+            except Exception:
+                pass
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(url)
+            self.update()
+        except Exception:
+            pass
+
+        if not opened:
+            messagebox.showinfo(
+                "Update available",
+                f"Could not open browser automatically.\n\nURL copied to clipboard:\n{url}",
+            )
 
     def open_settings(self):
         SettingsDialog(self)
