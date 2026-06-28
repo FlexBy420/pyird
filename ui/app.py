@@ -142,11 +142,11 @@ class IrdPickerDialog(ctk.CTkToplevel):
         self.title("Select IRD")
         self.geometry("620x480")
         self.resizable(True, False)
-        self.grab_set()
-        self.focus_set()
         self.lift()
+        self.after(100, self._do_grab)
 
         self.chosen = None
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         ctk.CTkLabel(
             self,
@@ -192,12 +192,30 @@ class IrdPickerDialog(ctk.CTkToplevel):
         ctk.CTkButton(btn_frame, text="Select", width=110,
                       command=self._select).pack(side="left", padx=8)
         ctk.CTkButton(btn_frame, text="Cancel", width=110, fg_color="gray40",
-                      command=self.destroy).pack(side="left", padx=8)
+                      command=self._on_close).pack(side="left", padx=8)
+
+    def _do_grab(self):
+        try:
+            self.grab_set()
+            self.focus_set()
+        except Exception:
+            pass
+
+    def _on_close(self):
+        try:
+            self.grab_release()
+        except Exception:
+            pass
+        self.destroy()
 
     def _select(self):
         sel = self._lb.curselection()
         if sel:
             self.chosen = self._values[sel[0]]
+        try:
+            self.grab_release()
+        except Exception:
+            pass
         self.destroy()
 
 
@@ -923,7 +941,9 @@ class App(ctk.CTk):
         done_event    = threading.Event()
 
         def show_on_ui():
-            result_holder[0] = self._pick_ird_ui(options)
+            dlg = IrdPickerDialog(self, options)
+            self.wait_window(dlg)
+            result_holder[0] = dlg.chosen
             done_event.set()
 
         self.after(0, show_on_ui)

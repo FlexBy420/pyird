@@ -18,3 +18,15 @@ os.makedirs(LOG_DIR, exist_ok=True)
 BASE_IRD_URL = "https://github.com/FlexBy420/playstation_3_ird_database/raw/main/"
 JSON_URL     = "https://flexby420.github.io/playstation_3_ird_database/all.json"
 APP_VERSION = "v0"
+
+if not getattr(sys, "frozen", False) and APP_VERSION == "v0":
+    try:
+        import subprocess as _sp
+        _count = _sp.check_output(
+            ["git", "rev-list", "--count", "HEAD"],
+            cwd=APP_ROOT,
+            stderr=_sp.DEVNULL,
+        ).decode().strip()
+        APP_VERSION = f"v{_count}"
+    except Exception:
+        pass
