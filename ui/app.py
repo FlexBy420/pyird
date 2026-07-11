@@ -27,6 +27,7 @@ from ui.info_panel import InfoPanel
 from ui.dialogs import (
     SettingsDialog,
     IrdPickerDialog,
+    IrdInfoDialog,
     BatchProgressDialog,
     BatchResultsDialog,
 )
@@ -52,7 +53,7 @@ class App(ctk.CTk):
         # Top bar
         self.topbar = ctk.CTkFrame(self.main, fg_color="transparent")
         self.topbar.grid(row=0, column=0, sticky="ew", padx=0, pady=(0, 6))
-        self.topbar.grid_columnconfigure(5, weight=1)
+        self.topbar.grid_columnconfigure(6, weight=1)
 
         self.pick_btn = ctk.CTkButton(
             self.topbar, text="Select IRD File", command=self.pick_file
@@ -82,9 +83,17 @@ class App(ctk.CTk):
         )
         self.settings_btn.grid(row=0, column=4, padx=(12, 0), sticky="w")
 
+        self.ird_info_btn = ctk.CTkButton(
+            self.topbar, text="IRD Info", width=110,
+            fg_color="gray30", hover_color="gray40",
+            state="disabled",
+            command=self.open_ird_info,
+        )
+        self.ird_info_btn.grid(row=0, column=5, padx=(8, 0), sticky="w")
+
         self.status_var = ctk.StringVar(value="")
         self.status_lbl = ctk.CTkLabel(self.topbar, textvariable=self.status_var)
-        self.status_lbl.grid(row=0, column=5, sticky="e", padx=(0, 20))
+        self.status_lbl.grid(row=0, column=6, sticky="e", padx=(0, 20))
 
         self._update_btn = ctk.CTkButton(
             self.topbar, text="", width=0,
@@ -225,7 +234,7 @@ class App(ctk.CTk):
         self._update_btn.configure(
             text=f"Update available: {tag}",
         )
-        self._update_btn.grid(row=0, column=6, padx=(12, 0), sticky="w")
+        self._update_btn.grid(row=0, column=7, padx=(12, 0), sticky="w")
         log(f"[UPDATER] New version available: {tag}")
 
     def _open_release_page(self):
@@ -261,6 +270,11 @@ class App(ctk.CTk):
 
     def open_settings(self):
         SettingsDialog(self)
+
+    def open_ird_info(self):
+        if not self.current_ird:
+            return
+        IrdInfoDialog(self, self.current_ird)
 
     def _show_pick_game_menu(self):
         menu = tk.Menu(
@@ -395,6 +409,9 @@ class App(ctk.CTk):
         self.batch_validate_btn.configure(state=state)
         self.hdd_mode_chk.configure(state=state)
         self.settings_btn.configure(state=state)
+        self.ird_info_btn.configure(
+            state=state if (enabled and self.current_ird) else "disabled"
+        )
 
     @staticmethod
     def _divider(parent, row_index: int):
@@ -447,6 +464,7 @@ class App(ctk.CTk):
         self.progress_lbl.configure(text="Working...")
         self._summary_counts = {"ok": 0, "missing": 0, "invalid": 0}
         self.pick_btn.configure(state="disabled")
+        self.ird_info_btn.configure(state="disabled")
 
         while not self._result_q.empty():
             try:
@@ -491,6 +509,7 @@ class App(ctk.CTk):
             self._set_ird_label("", "")
             self.clear_table()
             self.info_panel.clear()
+            self.ird_info_btn.configure(state="disabled")
             return False
         return True
 
@@ -731,6 +750,7 @@ class App(ctk.CTk):
                 }
 
             self.after(0, apply_rows)
+            self.after(0, lambda: self.ird_info_btn.configure(state="normal"))
             self.after(50, self.results.autosize_columns)
 
             def finish_and_maybe_validate():
