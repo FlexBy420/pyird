@@ -4,7 +4,7 @@ import struct
 import threading
 import tkinter as tk
 import customtkinter as ctk
-from tkinter import ttk, filedialog, messagebox, Listbox, SINGLE, END
+from tkinter import ttk, filedialog, messagebox
 import webbrowser
 from config import APP_VERSION
 from utils.logger import log
@@ -20,205 +20,17 @@ from core.validator import (
     run_validation,
     run_iso_validation,
 )
-
-class SettingsDialog(ctk.CTkToplevel):
-    def __init__(self, parent):
-        super().__init__(parent)
-        import settings as _settings
-        self._settings = _settings
-
-        self.title("Settings")
-        self.geometry("560x260")
-        self.resizable(False, False)
-        self.transient(parent)
-        self.after(50, self._do_grab)
-
-        pad = {"padx": 12, "pady": 6}
-
-        # IRD folder
-        ctk.CTkLabel(self, text="IRD Folder:", anchor="w").grid(
-            row=0, column=0, sticky="w", **pad
-        )
-        self._ird_var = ctk.StringVar(value=_settings.get("ird_dir"))
-        ctk.CTkEntry(self, textvariable=self._ird_var, width=340).grid(
-            row=0, column=1, sticky="ew", padx=(0, 4), pady=6
-        )
-        ctk.CTkButton(self, text="Browse...", width=80,
-                      command=self._browse_ird).grid(row=0, column=2, padx=(0, 12), pady=6)
-
-        # Log folder
-        ctk.CTkLabel(self, text="Log Folder:", anchor="w").grid(
-            row=1, column=0, sticky="w", **pad
-        )
-        self._log_var = ctk.StringVar(value=_settings.get("log_dir"))
-        ctk.CTkEntry(self, textvariable=self._log_var, width=340).grid(
-            row=1, column=1, sticky="ew", padx=(0, 4), pady=6
-        )
-        ctk.CTkButton(self, text="Browse...", width=80,
-                      command=self._browse_log).grid(row=1, column=2, padx=(0, 12), pady=6)
-
-        # Max workers
-        ctk.CTkLabel(self, text="CPU Workers:", anchor="w").grid(
-            row=2, column=0, sticky="w", **pad
-        )
-        self._workers_var = ctk.StringVar(value=str(_settings.get("max_workers", 0)))
-        ctk.CTkEntry(self, textvariable=self._workers_var, width=80).grid(
-            row=2, column=1, sticky="w", padx=(0, 4), pady=6
-        )
-        ctk.CTkLabel(
-            self,
-            text="0 = auto (half of CPU cores)",
-            text_color="gray",
-            font=("", 11),
-        ).grid(row=2, column=2, sticky="e", padx=(0, 4))
-
-        # Note
-        ctk.CTkLabel(
-            self,
-            text="Folder changes take effect after restarting the application.",
-            text_color="#c8a800",
-            font=("", 11),
-        ).grid(row=3, column=0, columnspan=3, sticky="w", padx=12, pady=(4, 0))
-
-        # Buttons
-        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
-        btn_frame.grid(row=4, column=0, columnspan=3, pady=16)
-        ctk.CTkButton(btn_frame, text="Save", width=100,
-                      command=self._save).pack(side="left", padx=8)
-        ctk.CTkButton(btn_frame, text="Cancel", width=100, fg_color="gray40",
-                      command=self._cancel).pack(side="left", padx=8)
-
-        self.grid_columnconfigure(1, weight=1)
-
-    def _browse_ird(self):
-        d = filedialog.askdirectory(title="Select IRD folder", parent=self)
-        if d:
-            self._ird_var.set(d)
-
-    def _browse_log(self):
-        d = filedialog.askdirectory(title="Select Log folder", parent=self)
-        if d:
-            self._log_var.set(d)
-
-    def _do_grab(self):
-        try:
-            self.grab_set()
-            self.focus_set()
-        except Exception:
-            pass
-
-    def _cancel(self):
-        try:
-            self.grab_release()
-        except Exception:
-            pass
-        self.destroy()
-
-    def _save(self):
-        try:
-            workers = int(self._workers_var.get())
-            if workers < 0: raise ValueError
-        except ValueError:
-            messagebox.showerror("Invalid value", "CPU Workers must be a non-negative integer.", parent=self)
-            return
-
-        ird_dir = self._ird_var.get()
-        log_dir = self._log_var.get()
-
-        self._settings._data["ird_dir"] = ird_dir
-        self._settings._data["log_dir"] = log_dir
-        self._settings._data["max_workers"] = workers
-        self._settings.save()
-
-        try:
-            self.grab_release()
-        except Exception:
-            pass
-        self.destroy()
-        log(f"[SETTINGS] Saved: ird={ird_dir}, log={log_dir}, workers={workers}")
-
-class IrdPickerDialog(ctk.CTkToplevel):
-    def __init__(self, parent, options: list[tuple[str, object]]):
-        super().__init__(parent)
-        self.title("Select IRD")
-        self.geometry("620x480")
-        self.resizable(True, False)
-        self.lift()
-        self.after(100, self._do_grab)
-
-        self.chosen = None
-        self.protocol("WM_DELETE_WINDOW", self._on_close)
-
-        ctk.CTkLabel(
-            self,
-            text="Multiple matching IRDs were found - please choose one:",
-            font=("", 13, "bold"),
-        ).pack(padx=14, pady=(14, 6), anchor="w")
-
-        ctk.CTkLabel(
-            self,
-            text="Redump entries are verified disc images and are preferred.",
-            text_color="gray",
-            font=("", 11),
-        ).pack(padx=14, pady=(0, 8), anchor="w")
-
-        list_frame = ctk.CTkFrame(self)
-        list_frame.pack(fill="both", expand=True, padx=14, pady=(0, 8))
-
-        sb = ctk.CTkScrollbar(list_frame, orientation="vertical")
-        sb.pack(side="right", fill="y")
-
-        self._lb = Listbox(
-            list_frame,
-            selectmode=SINGLE,
-            bg="#1e1e1e", fg="white",
-            selectbackground="#1f6aa5",
-            font=("Consolas", 11),
-            bd=0, highlightthickness=0,
-            yscrollcommand=sb.set,
-        )
-        self._lb.pack(fill="both", expand=True)
-        sb.configure(command=self._lb.yview)
-
-        self._values = []
-        for label, value in options:
-            self._lb.insert(END, f"  {label}")
-            self._values.append(value)
-
-        self._lb.selection_set(0)
-        self._lb.bind("<Double-Button-1>", lambda _e: self._select())
-
-        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
-        btn_frame.pack(side="bottom", pady=(0, 16))
-        ctk.CTkButton(btn_frame, text="Select", width=110,
-                      command=self._select).pack(side="left", padx=8)
-        ctk.CTkButton(btn_frame, text="Cancel", width=110, fg_color="gray40",
-                      command=self._on_close).pack(side="left", padx=8)
-
-    def _do_grab(self):
-        try:
-            self.grab_set()
-            self.focus_set()
-        except Exception:
-            pass
-
-    def _on_close(self):
-        try:
-            self.grab_release()
-        except Exception:
-            pass
-        self.destroy()
-
-    def _select(self):
-        sel = self._lb.curselection()
-        if sel:
-            self.chosen = self._values[sel[0]]
-        try:
-            self.grab_release()
-        except Exception:
-            pass
-        self.destroy()
-
+from core.batch import scan_batch_games, validate_single_game
+from ui.tooltip import bind_tooltip
+from ui.results_table import ResultsTable
+from ui.info_panel import InfoPanel
+from ui.dialogs import (
+    SettingsDialog,
+    IrdPickerDialog,
+    IrdInfoDialog,
+    BatchProgressDialog,
+    BatchResultsDialog,
+)
 
 class App(ctk.CTk):
     def __init__(self):
@@ -241,22 +53,22 @@ class App(ctk.CTk):
         # Top bar
         self.topbar = ctk.CTkFrame(self.main, fg_color="transparent")
         self.topbar.grid(row=0, column=0, sticky="ew", padx=0, pady=(0, 6))
-        self.topbar.grid_columnconfigure(5, weight=1)
+        self.topbar.grid_columnconfigure(6, weight=1)
 
         self.pick_btn = ctk.CTkButton(
             self.topbar, text="Select IRD File", command=self.pick_file
         )
         self.pick_btn.grid(row=0, column=0, sticky="w")
 
-        self.pick_folder_btn = ctk.CTkButton(
-            self.topbar, text="Select Game Folder", command=self.pick_folder
+        self.pick_game_btn = ctk.CTkButton(
+            self.topbar, text="Select Game (Folder / ISO)", command=self._show_pick_game_menu
         )
-        self.pick_folder_btn.grid(row=0, column=1, padx=(8, 0), sticky="w")
+        self.pick_game_btn.grid(row=0, column=1, padx=(8, 0), sticky="w")
 
-        self.pick_iso_btn = ctk.CTkButton(
-            self.topbar, text="Select Decrypted ISO", command=self.pick_iso
+        self.batch_validate_btn = ctk.CTkButton(
+            self.topbar, text="Batch Validate", command=self.batch_validate
         )
-        self.pick_iso_btn.grid(row=0, column=2, padx=(8, 0), sticky="w")
+        self.batch_validate_btn.grid(row=0, column=2, padx=(8, 0), sticky="w")
 
         self.hdd_mode_var = ctk.BooleanVar(value=False)
         self.hdd_mode_chk = ctk.CTkCheckBox(
@@ -271,9 +83,17 @@ class App(ctk.CTk):
         )
         self.settings_btn.grid(row=0, column=4, padx=(12, 0), sticky="w")
 
+        self.ird_info_btn = ctk.CTkButton(
+            self.topbar, text="IRD Info", width=110,
+            fg_color="gray30", hover_color="gray40",
+            state="disabled",
+            command=self.open_ird_info,
+        )
+        self.ird_info_btn.grid(row=0, column=5, padx=(8, 0), sticky="w")
+
         self.status_var = ctk.StringVar(value="")
         self.status_lbl = ctk.CTkLabel(self.topbar, textvariable=self.status_var)
-        self.status_lbl.grid(row=0, column=5, sticky="e", padx=(0, 20))
+        self.status_lbl.grid(row=0, column=6, sticky="e", padx=(0, 20))
 
         self._update_btn = ctk.CTkButton(
             self.topbar, text="", width=0,
@@ -281,26 +101,26 @@ class App(ctk.CTk):
             command=self._open_release_page,
         )
         # Hidden until an update is found
-        self._update_tag  = ""
-        self._update_url  = RELEASES_PAGE
+        self._update_tag = ""
+        self._update_url = RELEASES_PAGE
 
         # Path labels
-        self.loaded_ird_var   = ctk.StringVar(value="")
+        self.loaded_ird_var = ctk.StringVar(value="")
         self._loaded_ird_full = ""
-        self._loaded_ird_lbl  = ctk.CTkLabel(
+        self._loaded_ird_lbl = ctk.CTkLabel(
             self.main, textvariable=self.loaded_ird_var, font=("", 14, "bold")
         )
         self._loaded_ird_lbl.grid(row=1, column=0, sticky="w")
 
-        self.loaded_jb_var   = ctk.StringVar(value="")
+        self.loaded_jb_var = ctk.StringVar(value="")
         self._loaded_jb_full = ""
-        self._loaded_jb_lbl  = ctk.CTkLabel(
+        self._loaded_jb_lbl = ctk.CTkLabel(
             self.main, textvariable=self.loaded_jb_var, font=("", 14, "bold")
         )
         self._loaded_jb_lbl.grid(row=2, column=0, sticky="w", pady=(0, 6))
 
-        self._bind_tooltip(self._loaded_ird_lbl, lambda: self._loaded_ird_full)
-        self._bind_tooltip(self._loaded_jb_lbl,  lambda: self._loaded_jb_full)
+        bind_tooltip(self._loaded_ird_lbl, lambda: self._loaded_ird_full)
+        bind_tooltip(self._loaded_jb_lbl,  lambda: self._loaded_jb_full)
 
         self.validation_result_var = ctk.StringVar(value="")
         ctk.CTkLabel(
@@ -322,97 +142,24 @@ class App(ctk.CTk):
         self._set_busy(False)
 
         # Info panel
-        self.info_frame = ctk.CTkFrame(self.main)
-        self.info_frame.grid(row=5, column=0, sticky="ew", pady=(6, 6))
-        for c in range(7):
-            self.info_frame.grid_columnconfigure(c, weight=1)
-
-        self._info_meta = [
-            ("Product Code", "TITLE_ID",         "Product code printed on the disc."),
-            ("Title",        "TITLE",            "Game title."),
-            ("App Version",  "APP_VER",          "Game version as seen in XMB (APP_VER)."),
-            ("Game Version", "VERSION",          "Disc print version (VERSION) of this specific\ngame version (APP_VER)."),
-            ("Update Version",  "PS3_SYSTEM_VER",   "Minimum firmware version required (PS3_SYSTEM_VER), and provided on the disc for offline update."),
-            ("Files",        None,               "Number of files on the disc (from IRD)."),
-            ("Total Size",   None,               "Game size on disc (from IRD)."),
-        ]
-        headers      = [m[0] for m in self._info_meta]
-        self.info_vars   = [ctk.StringVar(value="") for _ in headers]
-        self.info_labels = []
-
-        for i, h in enumerate(headers):
-            ctk.CTkLabel(self.info_frame, text=h, font=("", 12, "bold")).grid(
-                row=0, column=i, sticky="ew", padx=4, pady=(4, 2)
-            )
-        for i, var in enumerate(self.info_vars):
-            lbl = ctk.CTkLabel(self.info_frame, textvariable=var)
-            lbl.grid(row=1, column=i, sticky="ew", padx=4, pady=(0, 6))
-            self.info_labels.append(lbl)
-            self._bind_info_tooltip(lbl, i)
+        self.info_panel = InfoPanel(self.main, self._info_tooltip_text)
+        self.info_panel.grid(row=5, column=0, sticky="ew", pady=(6, 6))
 
         self._divider(self.main, 6)
 
-        # Treeview table
-        self.table_container = ctk.CTkFrame(self.main)
-        self.table_container.grid(row=7, column=0, sticky="nsew", pady=(6, 0))
-        self.table_container.grid_columnconfigure(0, weight=1)
-        self.table_container.grid_rowconfigure(0, weight=1)
+        # Results table
+        self.results = ResultsTable(self.main)
+        self.results.grid(row=7, column=0, sticky="nsew", pady=(6, 0))
 
-        self.table_headers = ("Filename", "Size", "MD5", "Result")
-        self._row_details:   dict[str, str] = {}
-        self._row_raw_size: dict[str, int] = {}
-        self.tree = ttk.Treeview(
-            self.table_container, columns=self.table_headers, show="headings"
-        )
-        self.tree.grid(row=0, column=0, sticky="nsew")
-
-        scrollbar = ctk.CTkScrollbar(
-            self.table_container, orientation="vertical", command=self.tree.yview
-        )
-        scrollbar.grid(row=0, column=1, sticky="ns")
-        self.tree.configure(yscrollcommand=scrollbar.set)
-
-        col_cfg = {
-            "Filename": dict(anchor="w", width=380, stretch=True,  minwidth=120),
-            "Size":     dict(anchor="e", width=110, stretch=False, minwidth=80),
-            "MD5":      dict(anchor="w", width=260, stretch=False, minwidth=220),
-            "Result":   dict(anchor="w", width=120, stretch=False, minwidth=80),
-        }
-        for col in self.table_headers:
-            self.tree.heading(col, text=col)
-            self.tree.column(col, **col_cfg.get(col, dict(anchor="w", width=150, stretch=False)))
-
-        style = ttk.Style()
-        style.theme_use("clam")
-        style.configure(
-            "Treeview",
-            background="#1e1e1e", foreground="white",
-            fieldbackground="#1e1e1e", rowheight=22,
-            bordercolor="#3a3a3a", borderwidth=0,
-        )
-        style.configure(
-            "Treeview.Heading",
-            background="#2b2b2b", foreground="white", relief="flat",
-        )
-        style.map("Treeview.Heading", background=[("active", "#444444")])
-
-        self._rows:       list[str] = []
-        self._extra_rows: list[str] = []
-
-        # Tooltip for invalid/missing rows
-        self._tree_tip: object = None
-        self.tree.bind("<Motion>",   self._on_tree_motion)
-        self.tree.bind("<Leave>",    self._on_tree_leave)
-
-        self.current_ird  = None
-        self.current_jb:  str | None = None
+        self.current_ird = None
+        self.current_jb: str | None = None
         self.current_iso: str | None = None
-        self.param_sfo:   dict | None = None
-        self._ird_info:   dict       = {}
+        self.param_sfo: dict | None = None
+        self._ird_info: dict = {}
 
-        self._result_q       = queue.Queue()
+        self._result_q = queue.Queue()
         self._summary_counts = {"ok": 0, "missing": 0, "invalid": 0}
-        self._files_done     = 0
+        self._files_done = 0
 
         # Queue for tasks that need to run on the UI thread from background threads
         self._ui_request_q: queue.Queue = queue.Queue()
@@ -427,7 +174,7 @@ class App(ctk.CTk):
         if len(full) <= max_chars:
             return full
         parts = path.replace("\\", "/").split("/")
-        tail  = parts[-1]
+        tail = parts[-1]
         for part in reversed(parts[:-1]):
             candidate = f"{part}/{tail}"
             if len(f"{label}: …/{candidate}") <= max_chars:
@@ -444,156 +191,35 @@ class App(ctk.CTk):
         self._loaded_jb_full = f"{label}: {path}"
         self.loaded_jb_var.set(self._truncate_path(label, path))
 
-    @staticmethod
-    def _make_tooltip(widget, text_fn, *, offset_x=4, offset_y=2, font=("", 10), anchor="below"):
-        tip: list = [None]
-        after_id: list = [None]
+    def _info_tooltip_text(self, col_idx: int) -> str:
+        _header, sfo_key, description = self.info_panel.meta[col_idx]
+        ird_info = self._ird_info
+        lines = [description, ""]
 
-        def _destroy():
-            if after_id[0]:
+        if col_idx == 5:  # Files
+            ird_count = ird_info.get("file_count")
+            if ird_count is not None:
+                lines.append(f"IRD: {ird_count} files")
+            if self.current_jb:
                 try:
-                    widget.after_cancel(after_id[0])
+                    actual = sum(len(fs) for _, _, fs in os.walk(self.current_jb))
+                    lines.append(f"Disk : {actual} files")
                 except Exception:
                     pass
-                after_id[0] = None
-            if tip[0]:
-                try:
-                    tip[0].destroy()
-                except Exception:
-                    pass
-                tip[0] = None
+            elif self.current_iso and ird_info:
+                lines.append("Disk: (from ISO - not separately counted)")
+        elif col_idx == 6:  # Total Size
+            raw = ird_info.get("disc_size", 0)
+            lines.append(f"IRD: {human_size(raw)}  ({raw:,} B)" if raw else "IRD: -")
+        elif sfo_key:
+            ird_val = list(ird_info.values())[col_idx] if ird_info else None
+            sfo_val = (self.param_sfo or {}).get(sfo_key, "").strip() or "-"
+            ird_str = (str(ird_val).strip() if ird_val else None) or "-"
+            lines.append(f"IRD: {ird_str}")
+            lines.append(f"SFO: {sfo_val}")
 
-        def _show():
-            after_id[0] = None
-            msg = text_fn()
-            if not msg or tip[0]:
-                return
-            try:
-                tw = tk.Toplevel(widget)
-                tw.overrideredirect(True)
-                tw.withdraw()
-                tw.attributes("-topmost", True)
-                tw.attributes("-alpha", 0.95)
-                tk.Label(
-                    tw, text=msg, font=font,
-                    background="#2b2b2b", foreground="white",
-                    relief="flat", padx=6, pady=3,
-                    justify="left",
-                ).pack()
-                tw.update_idletasks()
-                x = widget.winfo_rootx() + offset_x
-                y = widget.winfo_rooty() + widget.winfo_height() + offset_y
-                tw.wm_geometry(f"+{x}+{y}")
-                tw.deiconify()
-                tip[0] = tw
-            except Exception:
-                pass
+        return "\n".join(lines).strip()
 
-        def enter(_e):
-            if after_id[0]:
-                return
-            after_id[0] = widget.after(400, _show)
-
-        def leave(_e):
-            _destroy()
-
-        widget.bind("<Enter>",   enter,             add="+")
-        widget.bind("<Leave>",   leave,             add="+")
-        widget.bind("<Destroy>", lambda _e: _destroy(), add="+")
-        return _destroy
-
-    @staticmethod
-    def _bind_tooltip(widget, text_fn):
-        App._make_tooltip(widget, text_fn)
-    def _on_tree_motion(self, event):
-        iid = self.tree.identify_row(event.y)
-        if not iid:
-            self._hide_tree_tip()
-            return
-
-        col      = self.tree.identify_column(event.x)
-        headers  = self.tree["columns"]
-        col_idx  = int(col.lstrip("#")) - 1 if col.startswith("#") else -1
-        col_name = headers[col_idx] if 0 <= col_idx < len(headers) else ""
-
-        if col_name == "Size":
-            raw = self._row_raw_size.get(iid, 0)
-            tip_text = f"{raw:,} bytes" if raw else ""
-        else:
-            tip_text = self._row_details.get(iid, "")
-
-        if not tip_text:
-            self._hide_tree_tip()
-            return
-
-        tip_key = (iid, col_name)
-        if self._tree_tip and getattr(self._tree_tip, "_for_key", None) == tip_key:
-            return
-        self._hide_tree_tip()
-
-        x = self.tree.winfo_rootx() + event.x + 16
-        y = self.tree.winfo_rooty() + event.y + 4
-        try:
-            tw = tk.Toplevel(self)
-            tw.overrideredirect(True)
-            tw.withdraw()
-            tw.attributes("-topmost", True)
-            tw.attributes("-alpha", 0.95)
-            tk.Label(
-                tw, text=tip_text, font=("Consolas", 10),
-                background="#2b2b2b", foreground="white",
-                relief="flat", padx=6, pady=3, justify="left",
-            ).pack()
-            tw.update_idletasks()
-            tw.wm_geometry(f"+{x}+{y}")
-            tw.deiconify()
-            tw._for_key = tip_key
-            self._tree_tip = tw
-        except Exception:
-            pass
-
-    def _on_tree_leave(self, _event):
-        self._hide_tree_tip()
-
-    def _hide_tree_tip(self):
-        if self._tree_tip:
-            try:
-                self._tree_tip.destroy()
-            except Exception:
-                pass
-            self._tree_tip = None
-
-    def _bind_info_tooltip(self, widget, col_idx: int):
-        def text_fn():
-            _header, sfo_key, description = self._info_meta[col_idx]
-            ird_info = self._ird_info
-            lines = [description, ""]
-
-            if col_idx == 5:  # Files
-                ird_count = ird_info.get("file_count")
-                if ird_count is not None:
-                    lines.append(f"IRD: {ird_count} files")
-                if self.current_jb:
-                    try:
-                        actual = sum(len(fs) for _, _, fs in os.walk(self.current_jb))
-                        lines.append(f"Disk : {actual} files")
-                    except Exception:
-                        pass
-                elif self.current_iso and ird_info:
-                    lines.append("Disk: (from ISO - not separately counted)")
-            elif col_idx == 6:  # Total Size
-                raw = ird_info.get("disc_size", 0)
-                lines.append(f"IRD: {human_size(raw)}  ({raw:,} B)" if raw else "IRD: -")
-            elif sfo_key:
-                ird_val = list(ird_info.values())[col_idx] if ird_info else None
-                sfo_val = (self.param_sfo or {}).get(sfo_key, "").strip() or "-"
-                ird_str = (str(ird_val).strip() if ird_val else None) or "-"
-                lines.append(f"IRD: {ird_str}")
-                lines.append(f"SFO: {sfo_val}")
-
-            return "\n".join(lines).strip()
-
-        App._make_tooltip(widget, text_fn, font=("Consolas", 10))
     def _start_update_check(self):
         check_for_update(
             current_version=APP_VERSION,
@@ -608,7 +234,7 @@ class App(ctk.CTk):
         self._update_btn.configure(
             text=f"Update available: {tag}",
         )
-        self._update_btn.grid(row=0, column=6, padx=(12, 0), sticky="w")
+        self._update_btn.grid(row=0, column=7, padx=(12, 0), sticky="w")
         log(f"[UPDATER] New version available: {tag}")
 
     def _open_release_page(self):
@@ -624,8 +250,8 @@ class App(ctk.CTk):
             try:
                 import subprocess
                 subprocess.Popen(["xdg-open", url],
-                                 stdout=subprocess.DEVNULL,
-                                 stderr=subprocess.DEVNULL)
+                                  stdout=subprocess.DEVNULL,
+                                  stderr=subprocess.DEVNULL)
                 opened = True
             except Exception:
                 pass
@@ -645,6 +271,120 @@ class App(ctk.CTk):
     def open_settings(self):
         SettingsDialog(self)
 
+    def open_ird_info(self):
+        if not self.current_ird:
+            return
+        IrdInfoDialog(self, self.current_ird)
+
+    def _show_pick_game_menu(self):
+        menu = tk.Menu(
+            self, tearoff=0, bg="#2b2b2b", fg="white",
+            activebackground="#1f6aa5", activeforeground="white", bd=0,
+        )
+        menu.add_command(label="Game Folder (JB)...", command=self.pick_folder)
+        menu.add_command(label="Decrypted ISO...",     command=self.pick_iso)
+        try:
+            x = self.pick_game_btn.winfo_rootx()
+            y = self.pick_game_btn.winfo_rooty() + self.pick_game_btn.winfo_height()
+            menu.tk_popup(x, y)
+        finally:
+            try:
+                menu.grab_release()
+            except Exception:
+                pass
+
+    def batch_validate(self):
+        root = filedialog.askdirectory(
+            title="Select folder containing your games (JB folders and/or ISO files)",
+            parent=self,
+        )
+        if not root:
+            log("[USER] Cancelled batch validate folder selection")
+            return
+        log(f"[USER] Batch validate root: {root}")
+
+        self._set_controls_enabled(False)
+        self._set_busy(True, "Scanning for games...")
+
+        threading.Thread(
+            target=self._batch_validate_worker, args=(root,), daemon=True
+        ).start()
+
+    def _batch_validate_worker(self, root: str):
+        try:
+            entries = scan_batch_games(root)
+        except Exception as ex:
+            log(f"[ERROR] Batch scan failed: {ex}")
+            self.after(0, lambda ex=ex: (
+                self._set_busy(False, ""),
+                self._set_controls_enabled(True),
+                messagebox.showerror("Batch Validate", f"Failed to scan folder: {ex}", parent=self),
+            ))
+            return
+
+        if not entries:
+            self.after(0, lambda: (
+                self._set_busy(False, ""),
+                self._set_controls_enabled(True),
+                messagebox.showinfo(
+                    "Batch Validate",
+                    "No games found.\nExpected either folders containing PS3_GAME "
+                    "or .iso files somewhere inside the selected folder.",
+                    parent=self,
+                ),
+            ))
+            return
+
+        total = len(entries)
+        dlg_holder: list = [None]
+        dlg_ready = threading.Event()
+
+        def make_dialog():
+            dlg_holder[0] = BatchProgressDialog(self, total)
+            dlg_ready.set()
+
+        self.after(0, make_dialog)
+        dlg_ready.wait()
+        dlg = dlg_holder[0]
+
+        for i, entry in enumerate(entries, start=1):
+            self.after(0, lambda i=i, name=entry.display_name: dlg.update_game(i - 1, total, name))
+            self.after(0, lambda: dlg.update_file_progress(""))
+            try:
+                self._batch_validate_single(entry, dlg)
+            except Exception as ex:
+                entry.status = "error"
+                entry.error = str(ex)
+                log(f"[ERROR] Batch validate failed for {entry.path}: {ex}")
+
+        self.after(0, lambda: dlg.update_game(total, total, "Done"))
+
+        def finish():
+            dlg.close()
+            self._set_busy(False, "Batch validation complete.")
+            self._set_controls_enabled(True)
+            ok = sum(1 for e in entries if e.status == "ok")
+            invalid = sum(1 for e in entries if e.status == "invalid")
+            errors = sum(1 for e in entries if e.status == "error")
+            log(f"[BATCH] Finished. Games: {total}  OK: {ok}  Invalid: {invalid}  Errors: {errors}")
+            BatchResultsDialog(self, entries)
+
+        self.after(150, finish)
+
+    def _batch_validate_single(self, entry, dlg: "BatchProgressDialog"):
+        def file_progress_cb(done: int, total: int):
+            self.after(0, lambda: dlg.update_file_progress(f"{done} / {total} files"))
+
+        def file_status_cb(msg: str):
+            self.after(0, lambda: dlg.update_file_progress(msg))
+
+        validate_single_game(
+            entry,
+            hdd_mode=self.hdd_mode_var.get(),
+            file_progress_cb=file_progress_cb,
+            file_status_cb=file_status_cb,
+        )
+
     def _pick_ird_ui(self, options: list[tuple[str, object]]) -> object:
         dlg = IrdPickerDialog(self, options)
         self.wait_window(dlg)
@@ -662,26 +402,16 @@ class App(ctk.CTk):
     def _run_on_ui(self, fn):
         self.after(0, fn)
 
-    _FIXED_WIDTH_COLS = {"Size", "MD5", "Result"}
-
-    def autosize_tree_columns(self):
-        self.update_idletasks()
-        for col in self.tree["columns"]:
-            if col in self._FIXED_WIDTH_COLS:
-                continue
-            char_widths = (
-                [len(self.tree.heading(col, option="text"))]
-                + [len(str(self.tree.set(iid, col))) for iid in self.tree.get_children()]
-            )
-            self.tree.column(col, width=max(char_widths) * 7 + 20)
-
     def _set_controls_enabled(self, enabled: bool):
         state = "normal" if enabled else "disabled"
         self.pick_btn.configure(state=state)
-        self.pick_folder_btn.configure(state=state)
-        self.pick_iso_btn.configure(state=state)
+        self.pick_game_btn.configure(state=state)
+        self.batch_validate_btn.configure(state=state)
         self.hdd_mode_chk.configure(state=state)
         self.settings_btn.configure(state=state)
+        self.ird_info_btn.configure(
+            state=state if (enabled and self.current_ird) else "disabled"
+        )
 
     @staticmethod
     def _divider(parent, row_index: int):
@@ -705,65 +435,13 @@ class App(ctk.CTk):
     def _set_status_threadsafe(self, msg: str):
         self.after(0, lambda: self.status_var.set(msg))
 
-    def _clear_table(self):
-        for iid in self._rows + self._extra_rows:
-            self.tree.delete(iid)
-        self._rows.clear()
-        self._extra_rows.clear()
-        self._row_details.clear()
-        self._row_raw_size.clear()
-
-    def _add_table_row(self, values: list[str], tag: str = "", raw_size: int = 0):
-        if tag in ("missing", "invalid"):
-            iid = self.tree.insert("", 0, values=values, tags=(tag,))
-            self._rows.insert(0, iid)
-        else:
-            iid = self.tree.insert("", "end", values=values, tags=(tag,))
-            self._rows.append(iid)
-        self._row_details[iid]  = ""
-        self._row_raw_size[iid] = raw_size
-        return iid
-
     def _drain_results(self, max_per_tick: int = 1200):
         if self._result_q.qsize() > 5000:
             max_per_tick = 3000
         processed = 0
         while processed < max_per_tick and not self._result_q.empty():
             idx, jb_size, jb_md5, result, tag = self._result_q.get()
-            if 0 <= idx < len(self._rows):
-                iid  = self._rows[idx]
-                vals = list(self.tree.item(iid, "values"))
-                vals[3] = result or ""
-                if tag == "invalid":
-                    ird_md5  = vals[2]
-                    raw_ird  = self._row_raw_size.get(iid, 0)
-                    raw_jb   = int(jb_size) if jb_size and jb_size.isdigit() else None
-                    def _fmt(raw):
-                        if raw is None: return chr(8212)
-                        return f"{human_size(raw)}  ({raw:,} B)"
-                    detail = (
-                        f"{'Size':8}  IRD  {_fmt(raw_ird)}\n"
-                        f"{'':8}  File {_fmt(raw_jb)}\n"
-                        f"\n"
-                        f"{'MD5':8}  IRD  {ird_md5}\n"
-                        f"{'':8}  File {jb_md5 or chr(8212)}"
-                    )
-                    self._row_details[iid] = detail
-                elif tag == "missing":
-                    self._row_details[iid] = "File not found on disk"
-                else:
-                    raw_jb = int(jb_size) if jb_size and jb_size.isdigit() else None
-                    if raw_jb is not None:
-                        self._row_raw_size[iid] = raw_jb
-                    self._row_details[iid] = ""
-                self.tree.item(iid, values=vals)
-                self.tree.tag_configure("ok",      background="#2E8B57")
-                self.tree.tag_configure("missing", background="#9B1313")
-                self.tree.tag_configure("invalid", background="#C76E00")
-                self.tree.tag_configure("extra",   background="#6B6248")
-                self.tree.item(iid, tags=(tag,))
-                if tag in ("missing", "invalid"):
-                    self.tree.move(iid, "", 0)
+            self.results.update_row(idx, jb_size, jb_md5, result, tag)
             if tag in self._summary_counts:
                 self._summary_counts[tag] += 1
             processed += 1
@@ -771,22 +449,22 @@ class App(ctk.CTk):
 
     def reset_app_state(self):
         self.current_ird = None
-        self.current_jb  = None
+        self.current_jb = None
         self.current_iso = None
-        self.param_sfo   = None
+        self.param_sfo = None
 
         self._set_ird_label("", "")
         self._set_jb_label("", "")
         self.validation_result_var.set("")
-        for var in self.info_vars:
-            var.set("")
+        self.info_panel.clear()
 
-        self._clear_table()
+        self.results.clear()
         self.status_var.set("")
         self._set_busy(False)
         self.progress_lbl.configure(text="Working...")
         self._summary_counts = {"ok": 0, "missing": 0, "invalid": 0}
         self.pick_btn.configure(state="disabled")
+        self.ird_info_btn.configure(state="disabled")
 
         while not self._result_q.empty():
             try:
@@ -795,17 +473,17 @@ class App(ctk.CTk):
                 break
 
     def clear_table(self):
-        self._clear_table()
+        self.results.clear()
 
     def _compare_param_with_ird(self) -> bool:
         if not self.current_ird or not self.param_sfo:
             return True
 
         ird_fields = {
-            "TITLE_ID":   (self.info_vars[0], self.info_labels[0], "Product Code"),
-            "APP_VER":    (self.info_vars[2], self.info_labels[2], "App Version"),
-            "VERSION":    (self.info_vars[3], self.info_labels[3], "Game Version"),
-            "UPDATE_VER": (self.info_vars[4], self.info_labels[4], "Update Version"),
+            "TITLE_ID":   (self.info_panel.vars[0], self.info_panel.labels[0], "Product Code"),
+            "APP_VER":    (self.info_panel.vars[2], self.info_panel.labels[2], "App Version"),
+            "VERSION":    (self.info_panel.vars[3], self.info_panel.labels[3], "Game Version"),
+            "UPDATE_VER": (self.info_panel.vars[4], self.info_panel.labels[4], "Update Version"),
         }
 
         mismatches = []
@@ -830,8 +508,8 @@ class App(ctk.CTk):
             self.current_ird = None
             self._set_ird_label("", "")
             self.clear_table()
-            for var in self.info_vars:
-                var.set("")
+            self.info_panel.clear()
+            self.ird_info_btn.configure(state="disabled")
             return False
         return True
 
@@ -934,7 +612,7 @@ class App(ctk.CTk):
 
         except Exception as ex:
             log(f"[ERROR] ISO preflight failed: {ex}")
-            self.after(0, lambda: (
+            self.after(0, lambda ex=ex: (
                 self._set_busy(False, ""),
                 self._set_controls_enabled(True),
                 messagebox.showwarning("ISO", f"Failed to read ISO: {ex}"),
@@ -972,7 +650,7 @@ class App(ctk.CTk):
 
     def _pick_ird_blocking(self, options: list[tuple[str, object]]) -> object:
         result_holder = [None]
-        done_event    = threading.Event()
+        done_event = threading.Event()
 
         def show_on_ui():
             dlg = IrdPickerDialog(self, options)
@@ -1014,7 +692,7 @@ class App(ctk.CTk):
             offset_to_file = {f["first_extent"]: f for f in ird.iso_files}
 
             def apply_rows():
-                self._clear_table()
+                self.results.clear()
                 for ird_file in ird.files:
                     fdata = offset_to_file.get(ird_file.offset)
                     if fdata:
@@ -1023,7 +701,7 @@ class App(ctk.CTk):
                     else:
                         name = f"File {ird_file.offset}"
                         size = ""
-                    self._add_table_row(
+                    self.results.add_row(
                         [name, human_size(size) if size else "", ird_file.md5_checksum.hex(), ""],
                         raw_size=int(size) if size else 0,
                     )
@@ -1031,7 +709,7 @@ class App(ctk.CTk):
                 # Extra files not mentioned in the IRD
                 if self.current_jb:
                     file_map = build_case_insensitive_file_map(self.current_jb)
-                    ird_set  = {
+                    ird_set = {
                         normalize_path_for_match(f["name"]) for f in ird.iso_files
                     }
                     extra_files = [
@@ -1044,12 +722,7 @@ class App(ctk.CTk):
                         rel_path = os.path.relpath(
                             full_path, self.current_jb
                         ).replace("\\", "/")
-                        iid = self.tree.insert(
-                            "", 0,
-                            values=[rel_path, "", "", "Extra File"],
-                            tags=("extra",),
-                        )
-                        self._extra_rows.append(iid)
+                        self.results.add_extra_row([rel_path, "", "", "Extra File"])
 
                 # Update info panel
                 def _clean(s: str) -> str:
@@ -1065,20 +738,20 @@ class App(ctk.CTk):
                     str(ird.file_count),
                     human_size(ird.disc_size) if ird.disc_size else "-",
                 ]
-                for var, v in zip(self.info_vars, vals):
-                    var.set(v)
+                self.info_panel.set_values(vals)
                 self._ird_info = {
-                    "product_code":  _clean(ird.product_code),
-                    "title":         _clean(ird.title),
-                    "app_version":   _clean(ird.app_version),
-                    "game_version":  _clean(ird.game_version),
-                    "update_version":_clean(ird.update_version),
-                    "file_count":    ird.file_count,
-                    "disc_size":     ird.disc_size,
+                    "product_code":   _clean(ird.product_code),
+                    "title":          _clean(ird.title),
+                    "app_version":    _clean(ird.app_version),
+                    "game_version":   _clean(ird.game_version),
+                    "update_version": _clean(ird.update_version),
+                    "file_count":     ird.file_count,
+                    "disc_size":      ird.disc_size,
                 }
 
             self.after(0, apply_rows)
-            self.after(50, self.autosize_tree_columns)
+            self.after(0, lambda: self.ird_info_btn.configure(state="normal"))
+            self.after(50, self.results.autosize_columns)
 
             def finish_and_maybe_validate():
                 self._set_busy(False, "Done.")
@@ -1117,7 +790,7 @@ class App(ctk.CTk):
                     break
 
             self._summary_counts = {"ok": 0, "missing": 0, "invalid": 0}
-            self._files_done     = 0
+            self._files_done = 0
 
             def progress_cb(done: int, total: int):
                 self.after(0, lambda: self.progress_lbl.configure(
@@ -1140,7 +813,7 @@ class App(ctk.CTk):
                 if not self._result_q.empty():
                     self.after(150, finish_when_quiet)
                     return
-                ok      = self._summary_counts["ok"]
+                ok = self._summary_counts["ok"]
                 missing = self._summary_counts["missing"]
                 invalid = self._summary_counts["invalid"]
                 summary = (
@@ -1212,7 +885,7 @@ class App(ctk.CTk):
                 if not self._result_q.empty():
                     self.after(150, finish_when_quiet)
                     return
-                ok      = self._summary_counts["ok"]
+                ok = self._summary_counts["ok"]
                 missing = self._summary_counts["missing"]
                 invalid = self._summary_counts["invalid"]
                 summary = (

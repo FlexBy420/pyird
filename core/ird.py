@@ -49,6 +49,7 @@ def parse_ird_content(content: bytes) -> Ird:
     result.product_code = stream.read(9).decode("ascii")
 
     title_length = stream.read(1)[0]
+    result.title_length = title_length
     result.title = stream.read(title_length).decode("utf-8")
 
     result.update_version = stream.read(4).decode("ascii")
