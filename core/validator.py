@@ -4,7 +4,7 @@ import os
 import queue
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from utils.logger import log
+from utils.logger import log, log_exception
 
 def normalize_path_for_match(rel_path: str) -> str:
     return rel_path.replace("\\", "/").strip("/").rstrip(".").lower()
@@ -111,7 +111,7 @@ def run_validation(
                     )
                     log(f"[JB-VALIDATION] {rel}: {'OK' if ok else 'INVALID'}")
                 except Exception as e:
-                    log(f"[ERROR] Read error: {e}")
+                    log_exception(f"Read error while validating {real_path}", e)
                     result = (idx, "", f"<error: {e}>", "Read error", "invalid")
 
             result_q.put(result)
@@ -181,7 +181,7 @@ def run_iso_validation(
                 )
                 log(f"[ISO-VALID] {rel}: {'OK' if ok else 'INVALID'}")
             except Exception as e:
-                log(f"[ERROR] ISO read error for {rel}: {e}")
+                log_exception(f"ISO read error for {rel}", e)
                 result = (idx, "", f"<error: {e}>", "Read error", "invalid")
 
             result_q.put(result)

@@ -1,6 +1,6 @@
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
-from utils.logger import log
+from utils.logger import log, set_log_dir
 
 class SettingsDialog(ctk.CTkToplevel):
     def __init__(self, parent):
@@ -56,8 +56,8 @@ class SettingsDialog(ctk.CTkToplevel):
         # Note
         ctk.CTkLabel(
             self,
-            text="Folder changes take effect after restarting the application.",
-            text_color="#c8a800",
+            text="Changes are applied immediately.",
+            text_color="gray",
             font=("", 11),
         ).grid(row=3, column=0, columnspan=3, sticky="w", padx=12, pady=(4, 0))
 
@@ -107,10 +107,21 @@ class SettingsDialog(ctk.CTkToplevel):
         ird_dir = self._ird_var.get()
         log_dir = self._log_var.get()
 
-        self._settings._data["ird_dir"] = ird_dir
-        self._settings._data["log_dir"] = log_dir
-        self._settings._data["max_workers"] = workers
-        self._settings.save()
+        try:
+            self._settings.update_values({
+                "ird_dir": ird_dir,
+                "log_dir": log_dir,
+                "max_workers": workers,
+            })
+            # Re-open the file logger immediately in the newly selected directory.
+            set_log_dir(log_dir)
+        except Exception as exc:
+            messagebox.showerror(
+                "Settings",
+                f"Failed to save settings:\n{exc}",
+                parent=self,
+            )
+            return
 
         try:
             self.grab_release()

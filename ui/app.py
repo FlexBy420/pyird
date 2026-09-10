@@ -7,7 +7,7 @@ import customtkinter as ctk
 from tkinter import ttk, filedialog, messagebox
 import webbrowser
 from config import APP_VERSION
-from utils.logger import log
+from utils.logger import log, log_exception
 from utils.updater import check_for_update, RELEASES_PAGE
 from utils.gzip import uncompress_gzip
 from utils.sfo import parse_param_sfo, read_param_sfo_from_iso
@@ -35,6 +35,7 @@ from ui.dialogs import (
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
+        self.report_callback_exception = self._report_callback_exception
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
 
@@ -53,7 +54,7 @@ class App(ctk.CTk):
         # Top bar
         self.topbar = ctk.CTkFrame(self.main, fg_color="transparent")
         self.topbar.grid(row=0, column=0, sticky="ew", padx=0, pady=(0, 6))
-        self.topbar.grid_columnconfigure(6, weight=1)
+        self.topbar.grid_columnconfigure(7, weight=1)
 
         self.pick_btn = ctk.CTkButton(
             self.topbar, text="Select IRD File", command=self.pick_file
@@ -68,20 +69,20 @@ class App(ctk.CTk):
         self.batch_validate_btn = ctk.CTkButton(
             self.topbar, text="Batch Validate", command=self.batch_validate
         )
-        self.batch_validate_btn.grid(row=0, column=2, padx=(8, 0), sticky="w")
+        self.batch_validate_btn.grid(row=0, column=3, padx=(8, 0), sticky="w")
 
         self.hdd_mode_var = ctk.BooleanVar(value=False)
         self.hdd_mode_chk = ctk.CTkCheckBox(
             self.topbar, text="HDD Mode (Slow)", variable=self.hdd_mode_var
         )
-        self.hdd_mode_chk.grid(row=0, column=3, padx=(12, 0), sticky="w")
+        self.hdd_mode_chk.grid(row=0, column=4, padx=(12, 0), sticky="w")
 
         self.settings_btn = ctk.CTkButton(
             self.topbar, text="Settings", width=100,
             fg_color="gray30", hover_color="gray40",
             command=self.open_settings,
         )
-        self.settings_btn.grid(row=0, column=4, padx=(12, 0), sticky="w")
+        self.settings_btn.grid(row=0, column=5, padx=(12, 0), sticky="w")
 
         self.ird_info_btn = ctk.CTkButton(
             self.topbar, text="IRD Info", width=110,
@@ -89,11 +90,11 @@ class App(ctk.CTk):
             state="disabled",
             command=self.open_ird_info,
         )
-        self.ird_info_btn.grid(row=0, column=5, padx=(8, 0), sticky="w")
+        self.ird_info_btn.grid(row=0, column=6, padx=(8, 0), sticky="w")
 
         self.status_var = ctk.StringVar(value="")
         self.status_lbl = ctk.CTkLabel(self.topbar, textvariable=self.status_var)
-        self.status_lbl.grid(row=0, column=6, sticky="e", padx=(0, 20))
+        self.status_lbl.grid(row=0, column=7, sticky="e", padx=(0, 20))
 
         self._update_btn = ctk.CTkButton(
             self.topbar, text="", width=0,
@@ -103,6 +104,10 @@ class App(ctk.CTk):
         # Hidden until an update is found
         self._update_tag = ""
         self._update_url = RELEASES_PAGE
+
+        self._pick_game_menu: tk.Menu | None = None
+        self._pick_game_menu_click_bind: str | None = None
+        self._pick_game_menu_escape_bind: str | None = None
 
         # Path labels
         self.loaded_ird_var = ctk.StringVar(value="")
@@ -152,6 +157,8 @@ class App(ctk.CTk):
         self.results.grid(row=7, column=0, sticky="nsew", pady=(6, 0))
 
         self.current_ird = None
+        self._current_ird_source = ""
+        self._accepted_mismatch_signature = None
         self.current_jb: str | None = None
         self.current_iso: str | None = None
         self.param_sfo: dict | None = None
@@ -167,6 +174,22 @@ class App(ctk.CTk):
         self.after(50, self._drain_results)
         self.after(50, self._drain_ui_requests)
         self.after(1000, self._start_update_check)
+
+    def _report_callback_exception(self, exc_type, exc_value, exc_tb):
+        import traceback
+        log(
+            "[CRITICAL] Uncaught Tkinter callback exception\n"
+            + "".join(traceback.format_exception(exc_type, exc_value, exc_tb)).rstrip()
+        )
+        try:
+            messagebox.showerror(
+                "Unexpected error",
+                f"An unexpected application error occurred:\n\n{exc_value}\n\n"
+                "The full traceback was written to the log file.",
+                parent=self,
+            )
+        except Exception:
+            pass
 
     @staticmethod
     def _truncate_path(label: str, path: str, max_chars: int = 80) -> str:
@@ -215,6 +238,11 @@ class App(ctk.CTk):
             ird_val = list(ird_info.values())[col_idx] if ird_info else None
             sfo_val = (self.param_sfo or {}).get(sfo_key, "").strip() or "-"
             ird_str = (str(ird_val).strip() if ird_val else None) or "-"
+            if sfo_key == "PS3_SYSTEM_VER":
+                if sfo_val != "-":
+                    sfo_val = self._normalize_fw_version(sfo_val) or "-"
+                if ird_str != "-":
+                    ird_str = self._normalize_fw_version(ird_str) or "-"
             lines.append(f"IRD: {ird_str}")
             lines.append(f"SFO: {sfo_val}")
 
@@ -234,7 +262,7 @@ class App(ctk.CTk):
         self._update_btn.configure(
             text=f"Update available: {tag}",
         )
-        self._update_btn.grid(row=0, column=7, padx=(12, 0), sticky="w")
+        self._update_btn.grid(row=0, column=8, padx=(12, 0), sticky="w")
         log(f"[UPDATER] New version available: {tag}")
 
     def _open_release_page(self):
@@ -276,23 +304,6 @@ class App(ctk.CTk):
             return
         IrdInfoDialog(self, self.current_ird)
 
-    def _show_pick_game_menu(self):
-        menu = tk.Menu(
-            self, tearoff=0, bg="#2b2b2b", fg="white",
-            activebackground="#1f6aa5", activeforeground="white", bd=0,
-        )
-        menu.add_command(label="Game Folder (JB)...", command=self.pick_folder)
-        menu.add_command(label="Decrypted ISO...",     command=self.pick_iso)
-        try:
-            x = self.pick_game_btn.winfo_rootx()
-            y = self.pick_game_btn.winfo_rooty() + self.pick_game_btn.winfo_height()
-            menu.tk_popup(x, y)
-        finally:
-            try:
-                menu.grab_release()
-            except Exception:
-                pass
-
     def batch_validate(self):
         root = filedialog.askdirectory(
             title="Select folder containing your games (JB folders and/or ISO files)",
@@ -306,15 +317,16 @@ class App(ctk.CTk):
         self._set_controls_enabled(False)
         self._set_busy(True, "Scanning for games...")
 
+        hdd_mode = bool(self.hdd_mode_var.get())
         threading.Thread(
-            target=self._batch_validate_worker, args=(root,), daemon=True
+            target=self._batch_validate_worker, args=(root, hdd_mode), daemon=True
         ).start()
 
-    def _batch_validate_worker(self, root: str):
+    def _batch_validate_worker(self, root: str, hdd_mode: bool):
         try:
             entries = scan_batch_games(root)
         except Exception as ex:
-            log(f"[ERROR] Batch scan failed: {ex}")
+            log_exception("Batch scan failed", ex)
             self.after(0, lambda ex=ex: (
                 self._set_busy(False, ""),
                 self._set_controls_enabled(True),
@@ -351,11 +363,11 @@ class App(ctk.CTk):
             self.after(0, lambda i=i, name=entry.display_name: dlg.update_game(i - 1, total, name))
             self.after(0, lambda: dlg.update_file_progress(""))
             try:
-                self._batch_validate_single(entry, dlg)
+                self._batch_validate_single(entry, dlg, hdd_mode)
             except Exception as ex:
                 entry.status = "error"
                 entry.error = str(ex)
-                log(f"[ERROR] Batch validate failed for {entry.path}: {ex}")
+                log_exception(f"Batch validate failed for {entry.path}", ex)
 
         self.after(0, lambda: dlg.update_game(total, total, "Done"))
 
@@ -371,7 +383,7 @@ class App(ctk.CTk):
 
         self.after(150, finish)
 
-    def _batch_validate_single(self, entry, dlg: "BatchProgressDialog"):
+    def _batch_validate_single(self, entry, dlg: "BatchProgressDialog", hdd_mode: bool):
         def file_progress_cb(done: int, total: int):
             self.after(0, lambda: dlg.update_file_progress(f"{done} / {total} files"))
 
@@ -380,7 +392,7 @@ class App(ctk.CTk):
 
         validate_single_game(
             entry,
-            hdd_mode=self.hdd_mode_var.get(),
+            hdd_mode=hdd_mode,
             file_progress_cb=file_progress_cb,
             file_status_cb=file_status_cb,
         )
@@ -449,6 +461,8 @@ class App(ctk.CTk):
 
     def reset_app_state(self):
         self.current_ird = None
+        self._current_ird_source = ""
+        self._accepted_mismatch_signature = None
         self.current_jb = None
         self.current_iso = None
         self.param_sfo = None
@@ -475,43 +489,93 @@ class App(ctk.CTk):
     def clear_table(self):
         self.results.clear()
 
+    @staticmethod
+    def _normalize_fw_version(value: str | None) -> str:
+        value = (value or "").strip()
+        if not value:
+            return ""
+
+        if "." in value:
+            major, minor = value.split(".", 1)
+            try:
+                major = str(int(major or "0"))
+            except ValueError:
+                major = major.lstrip("0") or "0"
+
+            if len(minor) >= 4 and minor.endswith("00"):
+                minor = minor[:-2]
+            return f"{major}.{minor}" if minor else major
+
+        try:
+            return str(int(value))
+        except ValueError:
+            return value.lstrip("0") or "0"
+
     def _compare_param_with_ird(self) -> bool:
         if not self.current_ird or not self.param_sfo:
             return True
 
-        ird_fields = {
-            "TITLE_ID":   (self.info_panel.vars[0], self.info_panel.labels[0], "Product Code"),
-            "APP_VER":    (self.info_panel.vars[2], self.info_panel.labels[2], "App Version"),
-            "VERSION":    (self.info_panel.vars[3], self.info_panel.labels[3], "Game Version"),
-            "UPDATE_VER": (self.info_panel.vars[4], self.info_panel.labels[4], "Update Version"),
-        }
+        comparisons = [
+            ("Product Code", self.current_ird.product_code, self.param_sfo.get("TITLE_ID"), 0, False),
+            ("App Version", self.current_ird.app_version, self.param_sfo.get("APP_VER"), 2, False),
+            ("Game Version", self.current_ird.game_version, self.param_sfo.get("VERSION"), 3, False),
+            ("Firmware Version", self.current_ird.update_version, self.param_sfo.get("PS3_SYSTEM_VER"), 4, True),
+        ]
 
         mismatches = []
-        for key, (var, label, display_name) in ird_fields.items():
-            ird_val = var.get()
-            sfo_val = self.param_sfo.get(key)
-            if sfo_val and sfo_val != ird_val:
+        signature_parts = []
+        for display_name, ird_raw, sfo_raw, label_idx, is_fw in comparisons:
+            ird_val = (ird_raw or "").strip()
+            sfo_val = (sfo_raw or "").strip()
+            left = self._normalize_fw_version(ird_val) if is_fw else ird_val
+            right = self._normalize_fw_version(sfo_val) if is_fw else sfo_val
+            mismatch = bool(sfo_val and left != right)
+            self.info_panel.labels[label_idx].configure(text_color="red" if mismatch else "white")
+            if mismatch:
+                display_ird = left if is_fw else ird_val
+                display_sfo = right if is_fw else sfo_val
                 mismatches.append(
-                    f"{display_name} in IRD: {ird_val}\n"
-                    f"{display_name} in Game Files: {sfo_val}"
+                    f"{display_name}:\n  IRD: {display_ird or '-'}\n  Game: {display_sfo or '-'}"
                 )
-                label.configure(text_color="red")
-            else:
-                label.configure(text_color="white")
+                signature_parts.append((display_name, left, right))
 
-        if mismatches:
+        if not mismatches:
+            self._accepted_mismatch_signature = None
+            return True
+
+        signature = tuple(signature_parts)
+        if self._accepted_mismatch_signature == signature:
+            return True
+
+        details = "\n\n".join(mismatches)
+        if self._current_ird_source == "user":
+            proceed = messagebox.askyesno(
+                "IRD mismatch",
+                "The selected IRD does not match this game dump.\n\n"
+                f"{details}\n\n"
+                "Do you want to continue with this IRD anyway?",
+                icon="warning",
+                parent=self,
+            )
+            if proceed:
+                self._accepted_mismatch_signature = signature
+                log(f"[WARNING] User accepted mismatching IRD: {details.replace(chr(10), ' | ')}")
+                return True
+        else:
             messagebox.showerror(
                 "IRD mismatch",
-                "The provided IRD does not appear to be for this game.\n"
-                "Please choose the correct IRD.\n\n" + "\n".join(mismatches),
+                "The automatically selected IRD does not match this game dump.\n\n" + details,
+                parent=self,
             )
-            self.current_ird = None
-            self._set_ird_label("", "")
-            self.clear_table()
-            self.info_panel.clear()
-            self.ird_info_btn.configure(state="disabled")
-            return False
-        return True
+
+        self.current_ird = None
+        self._current_ird_source = ""
+        self._accepted_mismatch_signature = None
+        self._set_ird_label("", "")
+        self.clear_table()
+        self.info_panel.clear()
+        self.ird_info_btn.configure(state="disabled")
+        return False
 
     def pick_file(self):
         path = filedialog.askopenfilename(
@@ -522,9 +586,85 @@ class App(ctk.CTk):
         self._set_ird_label("Loaded IRD", os.path.basename(path))
         self.status_var.set("")
         self._load_ird(path, source="user")
-        if not self._compare_param_with_ird():
-            return
         log(f"[USER] Selected IRD file: {path}")
+
+    def _dismiss_pick_game_menu(self, event=None):
+        menu = self._pick_game_menu
+        if menu is None:
+            return
+
+        if event is not None:
+            try:
+                widget_name = str(event.widget)
+                button_name = str(self.pick_game_btn)
+                if widget_name == button_name or widget_name.startswith(button_name + "."):
+                    return
+            except Exception:
+                pass
+
+        try:
+            menu.unpost()
+        except tk.TclError:
+            pass
+        try:
+            menu.destroy()
+        except tk.TclError:
+            pass
+
+        self._pick_game_menu = None
+
+        if self._pick_game_menu_click_bind is not None:
+            try:
+                self.unbind("<Button-1>", self._pick_game_menu_click_bind)
+            except tk.TclError:
+                pass
+            self._pick_game_menu_click_bind = None
+
+        if self._pick_game_menu_escape_bind is not None:
+            try:
+                self.unbind("<Escape>", self._pick_game_menu_escape_bind)
+            except tk.TclError:
+                pass
+            self._pick_game_menu_escape_bind = None
+
+    def _run_pick_game_action(self, callback):
+        self._dismiss_pick_game_menu()
+        self.after_idle(callback)
+
+    def _show_pick_game_menu(self):
+        if self._pick_game_menu is not None:
+            try:
+                if self._pick_game_menu.winfo_ismapped():
+                    self._dismiss_pick_game_menu()
+                    return
+            except tk.TclError:
+                pass
+            self._dismiss_pick_game_menu()
+
+        menu = tk.Menu(
+            self, tearoff=0, bg="#2b2b2b", fg="white",
+            activebackground="#1f6aa5", activeforeground="white", bd=0,
+        )
+        menu.add_command(
+            label="Game Folder (JB)...",
+            command=lambda: self._run_pick_game_action(self.pick_folder),
+        )
+        menu.add_command(
+            label="Decrypted ISO...",
+            command=lambda: self._run_pick_game_action(self.pick_iso),
+        )
+
+        self._pick_game_menu = menu
+        x = self.pick_game_btn.winfo_rootx()
+        y = self.pick_game_btn.winfo_rooty() + self.pick_game_btn.winfo_height()
+        menu.post(x, y)
+
+        self._pick_game_menu_click_bind = self.bind(
+            "<Button-1>", self._dismiss_pick_game_menu, add="+"
+        )
+        self._pick_game_menu_escape_bind = self.bind(
+            "<Escape>", self._dismiss_pick_game_menu, add="+"
+        )
 
     def pick_folder(self):
         root = filedialog.askdirectory(
@@ -554,7 +694,7 @@ class App(ctk.CTk):
                 if not self._compare_param_with_ird():
                     return
             except Exception as e:
-                log(f"[ERROR] Failed to parse PARAM.SFO: {e}")
+                log_exception("Failed to parse PARAM.SFO", e)
                 messagebox.showwarning("PARAM.SFO", f"Failed to parse PARAM.SFO: {e}")
 
         # Disable controls while fetching IRD in background
@@ -611,7 +751,7 @@ class App(ctk.CTk):
             self.after(0, on_ui)
 
         except Exception as ex:
-            log(f"[ERROR] ISO preflight failed: {ex}")
+            log_exception(f"ISO preflight failed for {iso_path}", ex)
             self.after(0, lambda ex=ex: (
                 self._set_busy(False, ""),
                 self._set_controls_enabled(True),
@@ -622,7 +762,7 @@ class App(ctk.CTk):
         try:
             ird_path = auto_get_ird(param_sfo, pick_fn=self._pick_ird_blocking)
         except Exception as e:
-            log(f"[ERROR] Failed to fetch IRD: {e}")
+            log_exception("Failed to fetch IRD", e)
             err_msg = str(e)
             self.after(0, lambda: (
                 self._set_busy(False, ""),
@@ -634,12 +774,23 @@ class App(ctk.CTk):
         if ird_path:
             self.after(0, lambda p=ird_path: self._on_ird_fetched(p))
         else:
-            self.after(0, lambda: (
-                self._set_busy(False, "IRD not found for this game."),
-                self._set_controls_enabled(True),
-                self.status_var.set("IRD not found for this game."),
-            ))
-            log(f"[INFO] No IRD found for {param_sfo.get('TITLE_ID', 'unknown')}")
+            title_id = (param_sfo.get("TITLE_ID") or "unknown").strip()
+
+            def show_not_found():
+                self._set_busy(False, "IRD not found for this game.")
+                self._set_controls_enabled(True)
+                self.status_var.set("IRD not found for this game.")
+                messagebox.showwarning(
+                    "IRD Not Found",
+                    f"No matching IRD could be found for this game"
+                    f"{f' ({title_id})' if title_id != 'unknown' else ''}.\n\n"
+                    "You can continue by selecting an IRD manually with "
+                    "\"Select IRD File\".",
+                    parent=self,
+                )
+
+            self.after(0, show_not_found)
+            log(f"[INFO] No IRD found for {title_id}")
             log(f"[SFO] SFO contents: {param_sfo}")
 
     def _on_ird_fetched(self, ird_path: str):
@@ -666,14 +817,18 @@ class App(ctk.CTk):
         label = "Auto-Fetched IRD" if source == "auto" else "Loaded IRD"
         self._set_ird_label(label, os.path.basename(path))
         self._set_busy(True, "Reading file...")
-        threading.Thread(target=self._parse_and_fill, args=(path,), daemon=True).start()
+        self._current_ird_source = source
+        self._accepted_mismatch_signature = None
+        threading.Thread(target=self._parse_and_fill, args=(path, source), daemon=True).start()
 
-    def _parse_and_fill(self, path: str):
+    def _parse_and_fill(self, path: str, source: str):
         try:
             with open(path, "rb") as f:
                 content = f.read()
             content = uncompress_gzip(content)
 
+            if len(content) < 4:
+                raise ValueError("IRD file is truncated")
             magic = struct.unpack("<I", content[:4])[0]
             if magic != Ird.MAGIC:
                 raise ValueError("Not a valid IRD file")
@@ -734,7 +889,7 @@ class App(ctk.CTk):
                     _clean(ird.title),
                     _clean(ird.app_version),
                     _clean(ird.game_version),
-                    _clean(ird.update_version),
+                    self._normalize_fw_version(ird.update_version) or "-",
                     str(ird.file_count),
                     human_size(ird.disc_size) if ird.disc_size else "-",
                 ]
@@ -744,7 +899,7 @@ class App(ctk.CTk):
                     "title":          _clean(ird.title),
                     "app_version":    _clean(ird.app_version),
                     "game_version":   _clean(ird.game_version),
-                    "update_version": _clean(ird.update_version),
+                    "update_version": self._normalize_fw_version(ird.update_version) or "-",
                     "file_count":     ird.file_count,
                     "disc_size":      ird.disc_size,
                 }
@@ -765,22 +920,22 @@ class App(ctk.CTk):
             self.after(0, finish_and_maybe_validate)
 
         except Exception as ex:
-            log(f"[ERROR] Failed to load IRD: {ex}")
+            log_exception(f"Failed to load IRD: {path}", ex)
             self._show_error_threadsafe(f"Failed to load IRD. {ex}")
 
     def _validate_jb_folder(self, root: str):
         self._set_busy(True, "Scanning JB folder...")
         self._set_controls_enabled(False)
+        hdd_mode = bool(self.hdd_mode_var.get())
         threading.Thread(
-            target=self._validate_worker, args=(root,), daemon=True
+            target=self._validate_worker, args=(root, hdd_mode), daemon=True
         ).start()
 
-    def _validate_worker(self, root: str):
+    def _validate_worker(self, root: str, hdd_mode: bool):
         try:
             ird = self.current_ird
             if not ird:
-                self._set_status_threadsafe("Load an IRD first")
-                self._set_busy(False)
+                self.after(0, lambda: self._set_busy(False, "Load an IRD first"))
                 return
 
             while not self._result_q.empty():
@@ -804,7 +959,7 @@ class App(ctk.CTk):
                 ird=ird,
                 root=root,
                 result_q=self._result_q,
-                hdd_mode=self.hdd_mode_var.get(),
+                hdd_mode=hdd_mode,
                 progress_callback=progress_cb,
                 status_callback=status_cb,
             )
@@ -832,9 +987,9 @@ class App(ctk.CTk):
             self.after(150, finish_when_quiet)
 
         except Exception as ex:
-            log(f"[ERROR] Validation failed: {ex}")
+            log_exception(f"JB validation failed: {root}", ex)
             self._show_error_threadsafe(f"Validation failed. {ex}")
-            self._set_controls_enabled(True)
+            self.after(0, lambda: self._set_controls_enabled(True))
 
     def _validate_iso(self, iso_path: str):
         self._set_busy(True, "Scanning ISO...")
@@ -847,8 +1002,7 @@ class App(ctk.CTk):
         try:
             ird = self.current_ird
             if not ird:
-                self._set_status_threadsafe("Load an IRD first")
-                self._set_busy(False)
+                self.after(0, lambda: self._set_busy(False, "Load an IRD first"))
                 return
 
             while not self._result_q.empty():
@@ -904,6 +1058,6 @@ class App(ctk.CTk):
             self.after(150, finish_when_quiet)
 
         except Exception as ex:
-            log(f"[ERROR] ISO validation failed: {ex}")
+            log_exception(f"ISO validation failed: {iso_path}", ex)
             self._show_error_threadsafe(f"ISO Validation failed. {ex}")
-            self._set_controls_enabled(True)
+            self.after(0, lambda: self._set_controls_enabled(True))
