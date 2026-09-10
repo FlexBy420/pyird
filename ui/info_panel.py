@@ -42,3 +42,5 @@ class InfoPanel:
     def clear(self):
         for var in self.vars:
             var.set("")
+        for label in self.labels:
+            label.configure(text_color="white")

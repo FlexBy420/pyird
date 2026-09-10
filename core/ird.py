@@ -1,7 +1,7 @@
 import struct
 from binascii import crc32
 from io import BytesIO
-from utils.logger import log
+from utils.logger import log, log_exception
 from utils.gzip import uncompress_gzip
 from core.iso import ISOHeader
 
@@ -98,6 +98,6 @@ def parse_ird_content(content: bytes) -> Ird:
         result.disc_size  = iso_header.disc_size_bytes
         result.iso_files  = iso_header.files
     except Exception as e:
-        log(f"[ERROR] ISO parse failed: {e}")
+        log_exception("Failed to parse embedded ISO header from IRD", e)
 
     return result

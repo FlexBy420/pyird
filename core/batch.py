@@ -1,7 +1,7 @@
 import os
 import queue
 import struct
-from utils.logger import log
+from utils.logger import log, log_exception
 from utils.gzip import uncompress_gzip
 from utils.sfo import parse_param_sfo, read_param_sfo_from_iso
 from utils.ird_fetch import auto_get_ird
@@ -90,14 +90,20 @@ def validate_single_game(
     entry.product_code = ird.product_code.strip()
     mismatches = []
     checks = {
-        "TITLE_ID":   ird.product_code,
-        "APP_VER":    ird.app_version,
-        "VERSION":    ird.game_version,
-        "UPDATE_VER": ird.update_version,
+        "TITLE_ID":       ird.product_code,
+        "APP_VER":        ird.app_version,
+        "VERSION":        ird.game_version,
+        "PS3_SYSTEM_VER": ird.update_version,
     }
     for key, ird_val in checks.items():
         sfo_val = (param_sfo or {}).get(key)
-        if sfo_val and sfo_val.strip() != (ird_val or "").strip():
+        left = (ird_val or "").strip()
+        right = (sfo_val or "").strip()
+        if key == "PS3_SYSTEM_VER":
+            from utils.ird_fetch import _normalize_fw_ver
+            left = _normalize_fw_ver(left)
+            right = _normalize_fw_ver(right)
+        if sfo_val and right != left:
             mismatches.append(f"{key}: IRD={ird_val!r} SFO={sfo_val!r}")
     if mismatches:
         entry.status = "error"
@@ -162,6 +168,6 @@ def validate_single_game(
                 if normalize_path_for_match(rel_path) not in ird_set
             ]
         except Exception as e:
-            log(f"[WARNING] Failed to compute extra files for {entry.path}: {e}")
+            log_exception(f"Failed to compute extra files for {entry.path}", e)
 
     entry.status = "invalid" if (entry.invalid > 0 or entry.missing > 0) else "ok"
