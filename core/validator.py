@@ -6,8 +6,18 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from utils.logger import log, log_exception
 
+def _normalize_dot_workaround(name: str) -> str:
+    if name.endswith("."):
+        return name.rstrip(".")
+    if name.endswith("_"):
+        return name[:-1]
+    return name
+
 def normalize_path_for_match(rel_path: str) -> str:
-    return rel_path.replace("\\", "/").strip("/").rstrip(".").lower()
+    path = rel_path.replace("\\", "/").strip("/").lower()
+    if not path:
+        return path
+    return "/".join(_normalize_dot_workaround(part) for part in path.split("/"))
 
 def build_case_insensitive_file_map(root: str) -> dict[str, str]:
     mapping: dict[str, str] = {}
